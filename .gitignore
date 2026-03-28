@@ -1,3 +1,7 @@
+# Temp/local files
+build_log.txt
+create_user.dart
+
 # Miscellaneous
 *.class
 *.log
