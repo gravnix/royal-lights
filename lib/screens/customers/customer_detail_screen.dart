@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart' show DateFormat, NumberFormat;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../config/app_date_format.dart';
 import '../../config/app_theme.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/customer.dart';
@@ -425,12 +426,19 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
         lines.add('$vatLabel: ₪${money.format(vatAmount)}');
       }
       if (o.discountPercentage > 0) {
-        final totalWithVat =
-            o.vatEnabled ? subtotalExVat * 1.18 : subtotalExVat;
-        final discountAmount = totalWithVat * (o.discountPercentage / 100);
-        lines.add(
-          '$discountLabel ${formatQty(o.discountPercentage)}%: -₪${money.format(discountAmount)}',
-        );
+        if (o.discountType == 'fixed_amount') {
+          lines.add(
+            '$discountLabel: -₪${money.format(o.discountPercentage)}',
+          );
+        } else {
+          final totalWithVat =
+              o.vatEnabled ? subtotalExVat * 1.18 : subtotalExVat;
+          final discountAmount =
+              totalWithVat * (o.discountPercentage / 100);
+          lines.add(
+            '$discountLabel ${formatQty(o.discountPercentage)}%: -₪${money.format(discountAmount)}',
+          );
+        }
       }
       lines.add('$finalTotalLabel: ₪${money.format(o.totalPrice)}');
       blocks.add(lines.join('\n'));
@@ -1964,9 +1972,8 @@ class _OrderRow extends StatelessWidget {
     final statusColor = orderStatusColor(order.status);
     final statusLabel =
         orderStatusLocalizedLabel(order.status, l10n);
-    final locale = Localizations.localeOf(context).toString();
     final created = order.createdAt ?? DateTime.now();
-    final dateStr = DateFormat.yMMMd(locale).format(created);
+    final dateStr = AppDateFormat.table(created);
     final bodiesWord = _trOrLocale(
       context,
       l10n,
@@ -2262,8 +2269,7 @@ class _PaymentRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final locale = Localizations.localeOf(context).toString();
-    final dateStr = DateFormat.yMMMd(locale).format(payment.date);
+    final dateStr = AppDateFormat.table(payment.date);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),

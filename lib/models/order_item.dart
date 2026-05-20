@@ -5,6 +5,37 @@ int _warrantyYearsFromJson(dynamic value) {
   return 0;
 }
 
+/// Parses user-entered decimal text that may use commas and/or dots
+/// (e.g. `1,234.56` thousands+decimal, `1234,56` decimal comma only).
+double parseDecimalInput(String raw, {double fallback = 0}) {
+  var t = raw.trim();
+  if (t.isEmpty) return fallback;
+
+  final lastComma = t.lastIndexOf(',');
+  final lastDot = t.lastIndexOf('.');
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) {
+      // European: 1.234,56
+      t = t.replaceAll('.', '').replaceAll(',', '.');
+    } else {
+      // US / IL: 1,234.56
+      t = t.replaceAll(',', '');
+    }
+  } else if (lastComma >= 0) {
+    final after = t.substring(lastComma + 1);
+    if (after.isNotEmpty && after.length <= 2) {
+      t = t.replaceAll(',', '.');
+    } else {
+      t = t.replaceAll(',', '');
+    }
+  }
+
+  final v = double.tryParse(t);
+  if (v == null || v.isNaN) return fallback;
+  return v;
+}
+
 /// Formats a (possibly fractional) quantity for display.
 /// Returns "1" for whole numbers, "1.5" / "1.25" for fractional values
 /// (trailing zeros stripped, max 3 decimals).

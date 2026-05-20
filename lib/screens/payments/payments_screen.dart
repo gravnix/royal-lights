@@ -5,27 +5,86 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../../config/app_date_format.dart';
 import '../../config/app_theme.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/payment.dart';
 import '../../models/customer.dart';
 import '../../providers/providers.dart';
+import '../../services/payment_service.dart';
 import '../../widgets/app_dropdown_styles.dart';
 import '../../widgets/app_loading_overlay.dart';
 import '../../widgets/editorial_screen_title.dart';
 
-String _localizedPaymentType(AppLocalizations? l10n, PaymentType t) {
+String _trOrLocale(
+  BuildContext context,
+  AppLocalizations? l10n,
+  String key, {
+  required String en,
+  required String he,
+  required String ar,
+}) {
+  final t = l10n?.tr(key) ?? '';
+  if (t.isNotEmpty && t != key) return t;
+  return switch (Localizations.localeOf(context).languageCode) {
+    'he' => he,
+    'ar' => ar,
+    _ => en,
+  };
+}
+
+String _receiptUploadErrorMessage(
+  BuildContext context,
+  AppLocalizations? l10n,
+  Object error,
+) {
+  final raw = error.toString().toLowerCase();
+  if (raw.contains('bucket not found')) {
+    return _trOrLocale(
+      context,
+      l10n,
+      'receiptStorageUnavailable',
+      en: 'Receipt storage is not set up on the server. Contact your administrator.',
+      he: 'אחסון הקבלות לא מוגדר בשרת. פנה למנהל המערכת.',
+      ar: 'تخزين الإيصالات غير مُعد على الخادم. تواصل مع مسؤول النظام.',
+    );
+  }
+  return '${_trOrLocale(context, l10n, 'receiptUploadFailed', en: 'Receipt upload failed', he: 'העלאת הקבלה נכשלה', ar: 'فشل رفع الإيصال')}: $error';
+}
+
+Future<void> _refreshPaymentsLists(
+  WidgetRef ref, {
+  required String customerId,
+}) async {
+  final filtered = ref.read(paymentsCustomerFilterProvider);
+  if (filtered != null) {
+    ref.invalidate(customerPaymentsProvider(filtered.id));
+    await ref.read(customerPaymentsProvider(filtered.id).future);
+  } else {
+    ref.invalidate(paymentsProvider(null));
+    await ref.read(paymentsProvider(null).future);
+  }
+  ref.invalidate(customerPaymentsProvider(customerId));
+}
+
+String _localizedPaymentType(
+  BuildContext context,
+  AppLocalizations? l10n,
+  PaymentType t,
+) {
   switch (t) {
     case PaymentType.cash:
-      return l10n?.tr('cash') ?? 'Cash';
+      return _trOrLocale(context, l10n, 'cash',
+          en: 'Cash', he: 'מזומן', ar: 'نقدي');
     case PaymentType.credit:
-      return l10n?.tr('credit') ?? 'Credit';
+      return _trOrLocale(context, l10n, 'credit',
+          en: 'Credit', he: 'אשראי', ar: 'بطاقة ائتمان');
     case PaymentType.check:
-      return l10n?.tr('check') ?? 'Check';
+      return _trOrLocale(context, l10n, 'check',
+          en: 'Check', he: 'צ\'ק', ar: 'شيك');
     case PaymentType.transfer:
-      return l10n?.tr('transfer') ?? 'Transfer';
+      return _trOrLocale(context, l10n, 'transfer',
+          en: 'Transfer', he: 'העברה', ar: 'تحويل');
   }
 }
 
@@ -37,6 +96,9 @@ class PaymentsScreen extends ConsumerStatefulWidget {
 }
 
 class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
+  /// Optimistic receipt paths keyed by payment id (until provider refresh completes).
+  final Map<String, String> _receiptOverrides = {};
+
   final _searchCtrl = TextEditingController();
   final _amountMinCtrl = TextEditingController();
   final _amountMaxCtrl = TextEditingController();
@@ -58,6 +120,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   }
 
   List<Payment> _filterPayments(
+    BuildContext context,
     List<Payment> payments,
     bool customerAlreadyScoped,
     AppLocalizations? l10n,
@@ -69,7 +132,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       it = it.where((p) {
         final notes = p.notes ?? '';
         final user = p.createdBy ?? '';
-        final typeLabel = _localizedPaymentType(l10n, p.type).toLowerCase();
+        final typeLabel =
+            _localizedPaymentType(context, l10n, p.type).toLowerCase();
         return p.cardName.toLowerCase().contains(q) ||
             p.customerName.toLowerCase().contains(q) ||
             notes.toLowerCase().contains(q) ||
@@ -156,9 +220,28 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     }
   }
 
-  String _formatDay(DateTime d) {
-    final code = Localizations.localeOf(context).languageCode;
-    return DateFormat.yMd(code).format(d);
+  String _formatDay(DateTime d) => AppDateFormat.table(d);
+
+  String? _storedReceipt(Payment payment) =>
+      _receiptOverrides[payment.id] ?? payment.imageUrl;
+
+  bool _hasReceipt(Payment payment) {
+    final stored = _storedReceipt(payment);
+    return stored != null && stored.trim().isNotEmpty;
+  }
+
+  String? _displayReceiptUrl(Payment payment) {
+    final stored = _storedReceipt(payment);
+    if (stored == null || stored.trim().isEmpty) return null;
+    final client = ref.read(supabaseClientProvider);
+    final bust = _receiptOverrides.containsKey(payment.id)
+        ? DateTime.now().millisecondsSinceEpoch.toString()
+        : payment.updatedAt?.millisecondsSinceEpoch.toString();
+    return PaymentService.resolveReceiptDisplayUrl(
+      client,
+      stored,
+      cacheBustToken: bust,
+    );
   }
 
   @override
@@ -189,6 +272,10 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           ref,
           l10n,
           initialCustomer: ref.read(paymentsCustomerFilterProvider),
+          onReceiptSaved: (paymentId, storagePath) {
+            if (!mounted) return;
+            setState(() => _receiptOverrides[paymentId] = storagePath);
+          },
         ),
         tooltip: l10n?.tr('newPayment') ?? 'New Payment',
         child: const Icon(Icons.add_rounded, size: 28),
@@ -639,7 +726,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
             child: paymentsAsync.when(
               data: (payments) {
                 final scoped = filterCustomer != null;
-                final filtered = _filterPayments(payments, scoped, l10n);
+                final filtered =
+                    _filterPayments(context, payments, scoped, l10n);
 
                 if (payments.isEmpty) {
                   return Center(
@@ -732,6 +820,16 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                           _buildColumnHeader(l10n?.tr('image') ?? 'Receipt'),
                           _buildColumnHeader(l10n?.tr('notes') ?? 'Notes'),
                           _buildColumnHeader(l10n?.tr('username') ?? 'User'),
+                          _buildColumnHeader(
+                            _trOrLocale(
+                              context,
+                              l10n,
+                              'actions',
+                              en: 'Actions',
+                              he: 'פעולות',
+                              ar: 'إجراءات',
+                            ),
+                          ),
                         ],
                         rows: filtered.map((payment) {
                           late final Widget typeLeading;
@@ -779,7 +877,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                             cells: [
                               DataCell(
                                 Text(
-                                  payment.date.toString().split(' ').first,
+                                  AppDateFormat.tableOrDash(payment.date),
                                   style: GoogleFonts.assistant(
                                     fontWeight: FontWeight.w500,
                                     color: AppTheme.onSurface,
@@ -801,6 +899,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                                       const SizedBox(width: 8),
                                       Text(
                                         _localizedPaymentType(
+                                          context,
                                           l10n,
                                           payment.type,
                                         ),
@@ -843,9 +942,18 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                               ),
                               DataCell(
                                 _PaymentReceiptTableCell(
-                                  imageUrl: payment.imageUrl,
+                                  type: payment.type,
+                                  hasReceipt: _hasReceipt(payment),
+                                  displayImageUrl: _displayReceiptUrl(payment),
                                   l10n: l10n,
                                 ),
+                                onTap: () async {
+                                  await _onReceiptCellTapped(
+                                    context,
+                                    payment,
+                                    l10n,
+                                  );
+                                },
                               ),
                               DataCell(
                                 Text(
@@ -859,6 +967,29 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                                   payment.createdBy ?? '-',
                                   style: GoogleFonts.assistant(
                                       color: AppTheme.onSurfaceVariant),
+                                ),
+                              ),
+                              DataCell(
+                                IconButton(
+                                  tooltip: _trOrLocale(
+                                    context,
+                                    l10n,
+                                    'delete',
+                                    en: 'Delete',
+                                    he: 'מחק',
+                                    ar: 'حذف',
+                                  ),
+                                  onPressed: () => _confirmDeletePayment(
+                                    context,
+                                    payment,
+                                    l10n,
+                                  ),
+                                  icon: Icon(
+                                    Icons.delete_outline_rounded,
+                                    color: AppTheme.error.withValues(
+                                      alpha: 0.85,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ],
@@ -886,6 +1017,206 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     );
   }
 
+  Future<void> _onReceiptCellTapped(
+    BuildContext context,
+    Payment payment,
+    AppLocalizations? l10n,
+  ) async {
+    final displayUrl = _displayReceiptUrl(payment);
+    if (displayUrl != null && displayUrl.isNotEmpty) {
+      _showPaymentReceiptPreview(context, displayUrl, l10n);
+      return;
+    }
+    if (payment.type == PaymentType.check) {
+      await _pickAndAttachCheckReceipt(context, payment, l10n);
+    }
+  }
+
+  Future<void> _confirmDeletePayment(
+    BuildContext context,
+    Payment payment,
+    AppLocalizations? l10n,
+  ) async {
+    final summary =
+        '${payment.cardName} — ${payment.customerName}\n'
+        '${AppDateFormat.tableOrDash(payment.date)} · '
+        '₪${payment.amount.toStringAsFixed(0)} · '
+        '${_localizedPaymentType(context, l10n, payment.type)}';
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surfaceContainerLowest,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          _trOrLocale(ctx, l10n, 'deletePayment',
+              en: 'Delete payment?', he: 'למחוק תשלום?', ar: 'حذف الدفعة؟'),
+          style: GoogleFonts.assistant(
+            fontWeight: FontWeight.w900,
+            color: AppTheme.onSurface,
+          ),
+        ),
+        content: Text(
+          '${_trOrLocale(ctx, l10n, 'confirmDeletePayment', en: 'This permanently removes this payment record.', he: 'פעולה זו מוחקת את רשומת התשלום לצמיתות.', ar: 'سيؤدي هذا إلى إزالة سجل الدفعة نهائيًا.')}\n\n$summary',
+          style: GoogleFonts.assistant(
+            color: AppTheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(_trOrLocale(ctx, l10n, 'cancel',
+                en: 'Cancel', he: 'ביטול', ar: 'إلغاء')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.error,
+              foregroundColor: AppTheme.onError,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(_trOrLocale(ctx, l10n, 'delete',
+                en: 'Delete', he: 'מחק', ar: 'حذف')),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true || !mounted) return;
+
+    try {
+      await ref.read(paymentServiceProvider).deleteWithReceipt(payment);
+      _receiptOverrides.remove(payment.id);
+      await _refreshPaymentsLists(ref, customerId: payment.customerId);
+      ref.invalidate(customersProvider);
+      ref.invalidate(totalUnpaidDebtsProvider);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _trOrLocale(context, l10n, 'success',
+                en: 'Success', he: 'הצלחה', ar: 'نجاح'),
+            style: GoogleFonts.assistant(),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppTheme.error,
+          content: Text(
+            '${_trOrLocale(context, l10n, 'error', en: 'Error', he: 'שגיאה', ar: 'خطأ')}: $e',
+            style: GoogleFonts.assistant(color: AppTheme.onError),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _pickAndAttachCheckReceipt(
+    BuildContext context,
+    Payment payment,
+    AppLocalizations? l10n,
+  ) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppTheme.surfaceContainerLowest,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: Text(_trOrLocale(ctx, l10n, 'takePhoto',
+                  en: 'Take Photo', he: 'צלם תמונה', ar: 'التقاط صورة')),
+              onTap: () => Navigator.pop(ctx, 'camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: Text(_trOrLocale(ctx, l10n, 'chooseFromGallery',
+                  en: 'Choose from Gallery',
+                  he: 'בחר מגלריה',
+                  ar: 'اختيار من المعرض')),
+              onTap: () => Navigator.pop(ctx, 'gallery'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+
+    final picker = ImagePicker();
+    final xFile = await picker.pickImage(
+      source: choice == 'camera' ? ImageSource.camera : ImageSource.gallery,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 88,
+    );
+    if (!mounted || xFile == null) return;
+    final bytes = await xFile.readAsBytes();
+    if (!mounted || bytes.isEmpty) return;
+
+    final username = ref.read(currentUsernameProvider);
+    try {
+      final updated = await ref.read(paymentServiceProvider).attachReceiptPhoto(
+            payment.id,
+            bytes,
+            updatedBy: username,
+          );
+      final storagePath = updated.imageUrl!.trim();
+      setState(() => _receiptOverrides[payment.id] = storagePath);
+      await _refreshPaymentsLists(ref, customerId: payment.customerId);
+      if (!mounted) return;
+      final filtered = ref.read(paymentsCustomerFilterProvider);
+      final List<Payment> refreshedList;
+      if (filtered != null) {
+        refreshedList =
+            await ref.read(customerPaymentsProvider(filtered.id).future);
+      } else {
+        refreshedList = await ref.read(paymentsProvider(null).future);
+      }
+      final refreshed = refreshedList
+          .cast<Payment?>()
+          .where((p) => p?.id == payment.id)
+          .map((p) => p!)
+          .firstOrNull;
+      setState(() {
+        if (refreshed != null &&
+            refreshed.imageUrl != null &&
+            refreshed.imageUrl!.trim().isNotEmpty) {
+          _receiptOverrides.remove(payment.id);
+        }
+      });
+      ref.invalidate(customersProvider);
+      ref.invalidate(totalUnpaidDebtsProvider);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _trOrLocale(context, l10n, 'success',
+                en: 'Success', he: 'הצלחה', ar: 'نجاح'),
+            style: GoogleFonts.assistant(),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppTheme.error,
+          content: Text(
+            _receiptUploadErrorMessage(context, l10n, e),
+            style: GoogleFonts.assistant(color: AppTheme.onError),
+          ),
+        ),
+      );
+    }
+  }
+
   DataColumn _buildColumnHeader(String label) {
     return DataColumn(
       label: Text(
@@ -901,24 +1232,145 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   }
 }
 
+void _showPaymentReceiptMemoryPreview(
+  BuildContext context,
+  Uint8List imageBytes,
+  AppLocalizations? l10n,
+) {
+  showDialog<void>(
+    context: context,
+    builder: (ctx) {
+      return Dialog(
+        backgroundColor: AppTheme.surfaceContainerLowest,
+        surfaceTintColor: Colors.transparent,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 560),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: IconButton(
+                    tooltip: _trOrLocale(ctx, l10n, 'close',
+                        en: 'Close', he: 'סגור', ar: 'إغلاق'),
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ),
+                Flexible(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.memory(
+                      imageBytes,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// Same popup pattern as order form [OrderFormScreen._showImagePreview].
+/// DataTable cells need [DataCell.onTap] — inner InkWell taps are ignored otherwise.
+void _showPaymentReceiptPreview(
+  BuildContext context,
+  String imageUrl,
+  AppLocalizations? l10n,
+) {
+  final trimmed = imageUrl.trim();
+  if (trimmed.isEmpty) return;
+
+  showDialog<void>(
+    context: context,
+    builder: (ctx) {
+      return Dialog(
+        backgroundColor: AppTheme.surfaceContainerLowest,
+        surfaceTintColor: Colors.transparent,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 560),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: IconButton(
+                    tooltip: _trOrLocale(ctx, l10n, 'close',
+                        en: 'Close', he: 'סגור', ar: 'إغلاق'),
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ),
+                Flexible(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: CachedNetworkImage(
+                      imageUrl: trimmed,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
 class _PaymentReceiptTableCell extends StatelessWidget {
   const _PaymentReceiptTableCell({
-    required this.imageUrl,
+    required this.type,
+    required this.hasReceipt,
+    required this.displayImageUrl,
     required this.l10n,
   });
 
-  final String? imageUrl;
+  final PaymentType type;
+  final bool hasReceipt;
+  final String? displayImageUrl;
   final AppLocalizations? l10n;
-
-  Future<void> _openUrl() async {
-    final uri = Uri.tryParse(imageUrl ?? '');
-    if (uri == null || !uri.hasScheme) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
 
   @override
   Widget build(BuildContext context) {
-    if (imageUrl == null || imageUrl!.isEmpty) {
+    if (!hasReceipt) {
+      if (type == PaymentType.check) {
+        return Tooltip(
+          message: _trOrLocale(context, l10n, 'attachCheckPhoto',
+              en: 'Add check photo',
+              he: 'הוספת תמונת צ\'ק',
+              ar: 'إضافة صورة الشيك'),
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppTheme.warning.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: AppTheme.warning.withValues(alpha: 0.4),
+              ),
+            ),
+            child: Icon(
+              Icons.add_a_photo_outlined,
+              size: 22,
+              color: AppTheme.warning,
+            ),
+          ),
+        );
+      }
       return Icon(
         Icons.remove,
         color: AppTheme.onSurfaceVariant.withValues(alpha: 0.4),
@@ -926,40 +1378,64 @@ class _PaymentReceiptTableCell extends StatelessWidget {
       );
     }
     return Tooltip(
-      message: l10n?.tr('receipt') ?? 'Receipt',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
+      message: _trOrLocale(context, l10n, 'view',
+          en: 'View', he: 'הצג', ar: 'عرض'),
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceContainerHighest.withValues(alpha: 0.55),
           borderRadius: BorderRadius.circular(10),
-          onTap: _openUrl,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: CachedNetworkImage(
-              imageUrl: imageUrl!,
-              width: 48,
-              height: 48,
+          border: Border.all(
+            color: AppTheme.outlineVariant.withValues(alpha: 0.22),
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CachedNetworkImage(
+              imageUrl: displayImageUrl ?? '',
+              cacheKey: displayImageUrl,
               fit: BoxFit.cover,
-              placeholder: (_, __) => SizedBox(
-                width: 48,
-                height: 48,
-                child: Center(
-                  child: SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppTheme.secondary.withValues(alpha: 0.6),
-                    ),
+              placeholder: (_, __) => Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppTheme.secondary.withValues(alpha: 0.6),
                   ),
                 ),
               ),
               errorWidget: (_, __, ___) => Icon(
                 Icons.receipt_long_rounded,
                 color: AppTheme.success,
-                size: 24,
+                size: 22,
               ),
             ),
-          ),
+            Positioned(
+              right: 2,
+              bottom: 2,
+              child: Container(
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withValues(alpha: 0.88),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: AppTheme.surfaceContainerLowest,
+                    width: 1.5,
+                  ),
+                ),
+                child: Icon(
+                  Icons.zoom_in_rounded,
+                  size: 11,
+                  color: AppTheme.onPrimary,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -971,6 +1447,7 @@ void showPaymentDialog(
   WidgetRef ref,
   AppLocalizations? l10n, {
   Customer? initialCustomer,
+  void Function(String paymentId, String storagePath)? onReceiptSaved,
 }) {
   final customersAsync = ref.read(customersProvider);
   final customers = customersAsync.value ?? [];
@@ -1115,7 +1592,7 @@ void showPaymentDialog(
                               .map(
                                 (t) => DropdownMenuEntry<PaymentType>(
                                   value: t,
-                                  label: _localizedPaymentType(l10n, t),
+                                  label: _localizedPaymentType(ctx, l10n, t),
                                 ),
                               )
                               .toList(),
@@ -1180,13 +1657,28 @@ void showPaymentDialog(
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    l10n?.tr('receipt') ?? 'Receipt',
+                    _trOrLocale(ctx, l10n, 'receipt',
+                        en: 'Receipt', he: 'קבלה', ar: 'إيصال'),
                     style: GoogleFonts.assistant(
                       fontWeight: FontWeight.w700,
                       fontSize: 13,
                       color: AppTheme.onSurfaceVariant,
                     ),
                   ),
+                  if (selectedType == PaymentType.check) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      _trOrLocale(ctx, l10n, 'checkPhotoRequired',
+                          en: 'Attach a photo of the check before saving.',
+                          he: 'יש לצרף תמונת צ\'ק לפני השמירה.',
+                          ar: 'يرجى إرفاق صورة الشيك قبل الحفظ.'),
+                      style: GoogleFonts.assistant(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.warning,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 10,
@@ -1211,7 +1703,10 @@ void showPaymentDialog(
                             ? null
                             : () => pickReceipt(ImageSource.camera),
                         icon: const Icon(Icons.camera_alt_outlined, size: 20),
-                        label: Text(l10n?.tr('takePhoto') ?? 'Take Photo'),
+                        label: Text(_trOrLocale(ctx, l10n, 'takePhoto',
+                            en: 'Take Photo',
+                            he: 'צלם תמונה',
+                            ar: 'التقاط صورة')),
                       ),
                       OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
@@ -1233,7 +1728,10 @@ void showPaymentDialog(
                             : () => pickReceipt(ImageSource.gallery),
                         icon:
                             const Icon(Icons.photo_library_outlined, size: 20),
-                        label: Text(l10n?.tr('chooseFromGallery') ?? 'Gallery'),
+                        label: Text(_trOrLocale(ctx, l10n, 'chooseFromGallery',
+                            en: 'Choose from Gallery',
+                            he: 'בחר מגלריה',
+                            ar: 'اختيار من المعرض')),
                       ),
                       if (receiptImageBytes != null)
                         TextButton.icon(
@@ -1255,15 +1753,52 @@ void showPaymentDialog(
                   ),
                   if (receiptImageBytes != null) ...[
                     const SizedBox(height: 12),
-                    SizedBox(
-                      width: 436,
-                      child: ClipRRect(
+                    Tooltip(
+                      message: _trOrLocale(ctx, l10n, 'view',
+                          en: 'View', he: 'הצג', ar: 'عرض'),
+                      child: InkWell(
+                        onTap: isSaving
+                            ? null
+                            : () => _showPaymentReceiptMemoryPreview(
+                                  ctx,
+                                  receiptImageBytes!,
+                                  l10n,
+                                ),
                         borderRadius: BorderRadius.circular(14),
-                        child: Image.memory(
-                          receiptImageBytes!,
-                          height: 140,
-                          width: 436,
-                          fit: BoxFit.cover,
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: Image.memory(
+                                receiptImageBytes!,
+                                height: 140,
+                                width: 436,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                            Positioned(
+                              right: 8,
+                              bottom: 8,
+                              child: Container(
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primary.withValues(alpha: 0.88),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: AppTheme.surfaceContainerLowest,
+                                    width: 1.5,
+                                  ),
+                                ),
+                                child: Icon(
+                                  Icons.zoom_in_rounded,
+                                  size: 16,
+                                  color: AppTheme.onPrimary,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -1331,6 +1866,29 @@ void showPaymentDialog(
                         onPressed: isSaving || selectedCustomer == null
                             ? null
                             : () async {
+                                if (selectedType == PaymentType.check &&
+                                    (receiptImageBytes == null ||
+                                        receiptImageBytes!.isEmpty)) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context)
+                                        .showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          _trOrLocale(
+                                            ctx,
+                                            l10n,
+                                            'checkPhotoRequired',
+                                            en: 'Attach a photo of the check before saving.',
+                                            he: 'יש לצרף תמונת צ\'ק לפני השמירה.',
+                                            ar: 'يرجى إرفاق صورة الشيك قبل الحفظ.',
+                                          ),
+                                          style: GoogleFonts.assistant(),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  return;
+                                }
                                 final username =
                                     ref.read(currentUsernameProvider);
                                 setDialogState(() => isSaving = true);
@@ -1354,40 +1912,47 @@ void showPaymentDialog(
                                   final created = await ref
                                       .read(paymentServiceProvider)
                                       .create(payment);
+                                  var uploadOk = true;
                                   if (receiptImageBytes != null &&
                                       receiptImageBytes!.isNotEmpty) {
                                     try {
-                                      final url = await ref
+                                      final updated = await ref
                                           .read(paymentServiceProvider)
-                                          .uploadReceiptPhoto(
+                                          .attachReceiptPhoto(
                                             created.id,
                                             receiptImageBytes!,
+                                            updatedBy: username,
                                           );
-                                      await ref
-                                          .read(paymentServiceProvider)
-                                          .update(created.id, {
-                                        'image_url': url,
-                                        'updated_by': username,
-                                      });
+                                      onReceiptSaved?.call(
+                                        created.id,
+                                        updated.imageUrl!.trim(),
+                                      );
                                     } catch (e) {
+                                      uploadOk = false;
                                       if (context.mounted) {
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(
                                           SnackBar(
+                                            backgroundColor: AppTheme.error,
                                             content: Text(
-                                              '${l10n?.tr('error') ?? 'Error'}: '
-                                              '${l10n?.tr('receipt') ?? 'Receipt'} upload failed. $e',
+                                              _receiptUploadErrorMessage(
+                                                ctx,
+                                                l10n,
+                                                e,
+                                              ),
+                                              style: GoogleFonts.assistant(
+                                                color: AppTheme.onError,
+                                              ),
                                             ),
                                           ),
                                         );
                                       }
                                     }
                                   }
-                                  ref.invalidate(paymentsProvider);
-                                  ref.invalidate(
-                                    customerPaymentsProvider(
-                                      selectedCustomer!.id,
-                                    ),
+                                  if (!uploadOk) return;
+                                  await _refreshPaymentsLists(
+                                    ref,
+                                    customerId: selectedCustomer!.id,
                                   );
                                   ref.invalidate(customersProvider);
                                   ref.invalidate(totalUnpaidDebtsProvider);

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../config/app_date_format.dart';
 import '../../config/app_theme.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/customer.dart';
@@ -341,10 +342,11 @@ class _CreateFixingTicketDialogState
                             thumbVisibility: true,
                             child: ListView(
                               children: orders.map((o) {
-                                final deliveryStr = o.deliveryDate
-                                    ?.toIso8601String()
-                                    .split('T')
-                                    .first;
+                                final hasDelivery = o.deliveryDate != null;
+                                final deliveryLabel = hasDelivery
+                                    ? '${_t(l10n, 'deliveryDate', 'Delivery')}: ${AppDateFormat.table(o.deliveryDate!)}'
+                                    : _t(l10n, 'deliveryDateMissing',
+                                        'Delivery date missing');
                                 return Container(
                                   margin: const EdgeInsets.only(bottom: 12),
                                   decoration: BoxDecoration(
@@ -373,10 +375,7 @@ class _CreateFixingTicketDialogState
                                         ),
                                       ),
                                       subtitle: Text(
-                                        deliveryStr != null
-                                            ? '${_t(l10n, 'deliveryDate', 'Delivery')}: $deliveryStr'
-                                            : _t(l10n, 'deliveryDateMissing',
-                                                'Delivery date missing'),
+                                        deliveryLabel,
                                         style: GoogleFonts.assistant(
                                           color: AppTheme.onSurfaceVariant,
                                           fontSize: 13,
