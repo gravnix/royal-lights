@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart';
-
 import '../../config/app_animations.dart';
+import '../../config/app_date_format.dart';
 import '../../config/app_theme.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/customer.dart';
@@ -100,11 +99,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     };
   }
 
-  String _formatOrderDate(BuildContext context, DateTime? d) {
-    if (d == null) return '-';
-    final loc = Localizations.localeOf(context).toString();
-    return DateFormat.yMMMd(loc).format(d);
-  }
+  String _formatOrderDate(DateTime? d) => AppDateFormat.tableOrDash(d);
 
   String _displayCreatedBy(
       BuildContext context, AppLocalizations? l10n, String? raw) {
@@ -915,7 +910,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                                                     DataCell(
                                                       Text(
                                                         _formatOrderDate(
-                                                          context,
                                                           order.createdAt,
                                                         ),
                                                         style: GoogleFonts

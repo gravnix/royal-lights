@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart' show DateFormat, NumberFormat;
 import 'package:uuid/uuid.dart';
+import '../../config/app_date_format.dart';
 import '../../config/app_theme.dart';
 import '../../services/whatsapp_service.dart';
 import '../../l10n/app_localizations.dart';
@@ -335,18 +336,15 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
   }
 
   double _parseQty(String raw) {
-    final t = raw.trim().replaceAll(',', '.');
-    final v = double.tryParse(t);
-    if (v == null || v <= 0) return 1;
+    final v = parseDecimalInput(raw, fallback: 1);
+    if (v <= 0) return 1;
     return v;
   }
 
   double _lineTotal(_ItemRow item) {
     final qty = _parseQty(item.quantityCtrl.text);
-    final unitText = item.priceCtrl.text.trim().replaceAll(',', '.');
-    final extrasText = item.extrasPriceCtrl.text.trim().replaceAll(',', '.');
-    final unit = double.tryParse(unitText) ?? 0;
-    final extrasAmt = double.tryParse(extrasText) ?? 0;
+    final unit = parseDecimalInput(item.priceCtrl.text);
+    final extrasAmt = parseDecimalInput(item.extrasPriceCtrl.text);
 
     // Both unit price and add-ons price should scale with quantity.
     return qty * (unit + extrasAmt);
@@ -363,8 +361,7 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
   /// Installation fee when assembly is required (admin input).
   double get _assemblyInstallPrice {
     if (!_assemblyRequired) return 0;
-    final t = _assemblyPriceController.text.trim().replaceAll(',', '.');
-    return double.tryParse(t) ?? 0;
+    return parseDecimalInput(_assemblyPriceController.text);
   }
 
   /// Line items + installation (when required).
@@ -379,23 +376,29 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
   /// Discount percentage (0–100), parsed from controller and clamped.
   double get _discountPercentage {
     if (_discountType == 'fixed_amount') return 0;
-    final t = _discountPctController.text.trim().replaceAll(',', '.');
-    final v = double.tryParse(t) ?? 0;
-    if (v.isNaN || v <= 0) return 0;
+    final v = parseDecimalInput(_discountPctController.text);
+    if (v <= 0) return 0;
     return v > 100 ? 100 : v;
+  }
+
+  /// Fixed discount in shekels (stored in [Order.discountPercentage] when type is fixed_amount).
+  double get _discountFixedAmount {
+    if (_discountType != 'fixed_amount') return 0;
+    final amt = parseDecimalInput(_discountPctController.text);
+    return amt > 0 ? amt : 0;
   }
 
   /// Discount amount in shekels (applied to the VAT-inclusive total).
   double get _discountAmount {
     if (_discountType == 'percentage') {
       return _totalWithVat * (_discountPercentage / 100);
-    } else {
-      // Fixed amount
-      final t = _discountPctController.text.trim().replaceAll(',', '.');
-      final amt = double.tryParse(t) ?? 0;
-      return amt > 0 ? amt : 0;
     }
+    return _discountFixedAmount;
   }
+
+  /// Value persisted in `discount_percentage` (percent or fixed ₪ depending on type).
+  double get _discountStoredValue =>
+      _discountType == 'percentage' ? _discountPercentage : _discountFixedAmount;
 
   /// Final amount stored in DB as `total_price`.
   double get _grandTotalWithVat => _totalWithVat - _discountAmount;
@@ -1575,12 +1578,8 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
                                                   ),
                                                 ),
                                                 child: Text(
-                                                  _assemblyDate == null
-                                                      ? ''
-                                                      : _assemblyDate!
-                                                          .toString()
-                                                          .split(' ')
-                                                          .first,
+                                                  AppDateFormat.tableOrEmpty(
+                                                      _assemblyDate),
                                                   style: GoogleFonts.assistant(
                                                     fontSize: 16,
                                                     color: AppTheme.onSurface,
@@ -1834,9 +1833,8 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
     AppLocalizations? l10n,
   ) {
     final media = MediaQuery.sizeOf(context);
-    // Very compact drawer (~24% height) with a slightly higher cap
-    // so the bottom actions (Save + Send) don't overflow.
-    final expandedContentH = (media.height * 0.24).clamp(180.0, 292.0);
+    // Room for VAT/discount rows + totals + Save/Send (was capped at 292px → overflow).
+    final expandedContentH = (media.height * 0.34).clamp(260.0, 420.0);
     const peekContentH = 52.0;
     final range = expandedContentH - peekContentH;
 
@@ -1924,16 +1922,15 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
                     height: contentH,
                     child: ClipRect(
                       child: SingleChildScrollView(
-                        physics: const NeverScrollableScrollPhysics(),
+                        physics: drawerOpen
+                            ? const ClampingScrollPhysics()
+                            : const NeverScrollableScrollPhysics(),
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-                          child: SizedBox(
-                            height: expandedContentH,
-                            child: _buildOrderBottomBar(
-                              context,
-                              l10n,
-                              stretchForDrawer: true,
-                            ),
+                          child: _buildOrderBottomBar(
+                            context,
+                            l10n,
+                            stretchForDrawer: true,
                           ),
                         ),
                       ),
@@ -1966,10 +1963,17 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
     );
 
     if (stretchForDrawer) {
+      // Fixed notes height so the summary column is not squeezed (overflow).
+      const drawerNotesH = 96.0;
       return Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(child: notesCard),
+          Expanded(
+            child: SizedBox(
+              height: drawerNotesH,
+              child: notesCard,
+            ),
+          ),
           const SizedBox(width: 10),
           Expanded(child: summaryCard),
         ],
@@ -2270,13 +2274,15 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
         ],
       ),
       padding: fillVertical
-          ? const EdgeInsets.fromLTRB(14, 6, 14, 6)
+          ? const EdgeInsets.fromLTRB(14, 8, 14, 8)
           : const EdgeInsets.all(22),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: TextButton.icon(
@@ -3483,9 +3489,7 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
                               : null,
                         ),
                         child: Text(
-                          item.deliveryDate == null
-                              ? ''
-                              : item.deliveryDate!.toString().split(' ').first,
+                          AppDateFormat.tableOrEmpty(item.deliveryDate),
                           style: cellStyle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -3809,8 +3813,8 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
           notes: item.supplierNote.trim().isEmpty
               ? null
               : item.supplierNote.trim(),
-          price: double.tryParse(item.priceCtrl.text) ?? 0,
-          extrasPrice: double.tryParse(item.extrasPriceCtrl.text) ?? 0,
+          price: parseDecimalInput(item.priceCtrl.text),
+          extrasPrice: parseDecimalInput(item.extrasPriceCtrl.text),
           assemblyRequired: item.assemblyRequired,
           roomId: null,
           roomLabel: roomTrim.isEmpty ? null : roomTrim,
@@ -3844,7 +3848,7 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
             'total_price': _grandTotalWithVat,
             'vat_enabled': _vatEnabled,
             'discount_type': _discountType,
-            'discount_percentage': _discountType == 'percentage' ? _discountPercentage : 0,
+            'discount_percentage': _discountStoredValue,
             'notes': _notesController.text.trim(),
             'updated_by': username,
           },
@@ -3866,7 +3870,7 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
           totalPrice: _grandTotalWithVat,
           vatEnabled: _vatEnabled,
           discountType: _discountType,
-          discountPercentage: _discountType == 'percentage' ? _discountPercentage : 0,
+          discountPercentage: _discountStoredValue,
           notes: _notesController.text.trim(),
           createdBy: username,
           updatedBy: username,
@@ -3883,6 +3887,7 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
       }
       ref.invalidate(ordersProvider);
       ref.invalidate(customersProvider);
+      ref.invalidate(customerOrdersProvider(_selectedCustomer!.id));
 
       final itemsSig = _signatureForOrderItems(orderItems);
       final shouldSendCustomerWa =

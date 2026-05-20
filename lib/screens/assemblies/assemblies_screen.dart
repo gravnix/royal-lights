@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart';
-
+import '../../config/app_date_format.dart';
 import '../../config/app_theme.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/order.dart';
@@ -248,10 +247,7 @@ class _AssembliesScreenState extends ConsumerState<AssembliesScreen> {
   }
 }
 
-String _formatAssemblyDate(BuildContext context, DateTime d) {
-  final locale = Localizations.localeOf(context).toString();
-  return DateFormat.yMMMd(locale).format(d);
-}
+String _formatAssemblyDate(DateTime d) => AppDateFormat.table(d);
 
 String _daysUntilSnippet(BuildContext context, int? daysUntil) {
   if (daysUntil == null) return '';
@@ -327,7 +323,7 @@ class _AssemblyCard extends StatelessWidget {
 
     Widget? dateChip() {
       if (order.assemblyDate == null) return null;
-      final dateStr = _formatAssemblyDate(context, order.assemblyDate!);
+      final dateStr = _formatAssemblyDate(order.assemblyDate!);
       final extra = _daysUntilSnippet(context, daysUntil);
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
