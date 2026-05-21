@@ -3792,6 +3792,28 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
       return false;
     }
 
+    // Session expiry check — if JWT is dead, log out cleanly instead of
+    // hitting the wire with an expired token (which surfaces as PGRST116).
+    final auth = ref.read(authServiceProvider);
+    if (!auth.hasValidSession) {
+      final lang = Localizations.localeOf(context).languageCode;
+      final message = switch (lang) {
+        'he' => 'פג תוקף ההתחברות. נא להתחבר מחדש.',
+        'ar' => 'انتهت صلاحية الجلسة. يرجى تسجيل الدخول مرة أخرى.',
+        _ => 'Session expired. Please sign in again.',
+      };
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message, style: GoogleFonts.assistant()),
+          backgroundColor: AppTheme.error,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      await auth.signOut();
+      return false;
+    }
+
     setState(() => _isLoading = true);
 
     try {
@@ -3921,7 +3943,35 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
       return true;
     } catch (e) {
       if (!mounted) return false;
+
+      // Surface session-expired errors as a clean logout, not as raw exception text.
+      // PGRST116 happens when RLS blocks a .single() read after the JWT expires.
+      final errStr = e.toString().toLowerCase();
+      final isAuthError = errStr.contains('jwt expired') ||
+          (errStr.contains('jwt') && errStr.contains('expired')) ||
+          errStr.contains('pgrst116') ||
+          errStr.contains('401') ||
+          errStr.contains('unauthorized');
+
       final lang = Localizations.localeOf(context).languageCode;
+
+      if (isAuthError) {
+        final message = switch (lang) {
+          'he' => 'פג תוקף ההתחברות. נא להתחבר מחדש.',
+          'ar' => 'انتهت صلاحية الجلسة. يرجى تسجيل الدخول مرة أخرى.',
+          _ => 'Session expired. Please sign in again.',
+        };
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message, style: GoogleFonts.assistant()),
+            backgroundColor: AppTheme.error,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        await ref.read(authServiceProvider).signOut();
+        return false;
+      }
+
       final errorMessage = switch (lang) {
         'he' => 'שגיאה בשמירה: $e',
         'ar' => 'خطأ في الحفظ: $e',

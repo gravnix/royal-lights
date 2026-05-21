@@ -2608,50 +2608,60 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           await ref.read(customerServiceProvider).getById(order.customerId);
       if (!mounted) return;
       final phone = customer.phones.isNotEmpty ? customer.phones.first : '';
-      if (phone.trim().isEmpty) {
+      final hasPhone = phone.trim().isNotEmpty;
+      final lang = Localizations.localeOf(context).languageCode;
+      final isFinalBatch = selected.length == notReady.length;
+
+      if (!hasPhone) {
+        // No phone — show a non-blocking warning. We still proceed to update
+        // the status when the batch is final.
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               _trLocale(
                 context,
                 l10n,
-                'orderWorkflowNoPhoneCustomer',
-                en: 'Customer has no phone for WhatsApp.',
-                he: 'אין מספר טלפון ללקוח ל-WhatsApp.',
-                ar: 'لا يوجد هاتف للعميل لواتساب.',
+                'orderWorkflowNoPhoneCustomerStatusUpdated',
+                en:
+                    'Note: WhatsApp not sent — customer has no phone. Status was still updated.',
+                he:
+                    'שים לב: לא נשלחה הודעת WhatsApp — אין מספר טלפון ללקוח. הסטטוס עודכן בכל זאת.',
+                ar:
+                    'ملاحظة: لم يتم إرسال رسالة واتساب — لا يوجد هاتف للعميل. تم تحديث الحالة على أي حال.',
               ),
               style: GoogleFonts.assistant(),
             ),
             backgroundColor: AppTheme.warning,
             behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
           ),
         );
-      } else {
-        final lang = Localizations.localeOf(context).languageCode;
-        final isFinalBatch = selected.length == notReady.length;
-        if (isFinalBatch) {
-          if (mounted && await confirmSendCustomerWhatsApp(context)) {
-            await _openWhatsAppToPhone(
-                phone, _waCustomerReadyPickup(lang, order));
-          }
-          await ref.read(orderServiceProvider).updateStatus(
-                order.id,
-                OrderStatus.awaitingShipping.dbValue,
-                username,
-              );
-        } else {
-          final selectedItems = order.items
-              .where((i) => i.id != null && selected.contains(i.id))
-              .toList();
-          final itemsBlock = selectedItems
-              .map((it) => '${it.name}\n×${formatQty(it.quantity)}')
-              .join('\n\n');
-          if (mounted && await confirmSendCustomerWhatsApp(context)) {
-            await _openWhatsAppToPhone(
-              phone,
-              _waCustomerPartialReady(lang, order, itemsBlock: itemsBlock),
+      }
+
+      if (isFinalBatch) {
+        if (hasPhone &&
+            mounted &&
+            await confirmSendCustomerWhatsApp(context)) {
+          await _openWhatsAppToPhone(
+              phone, _waCustomerReadyPickup(lang, order));
+        }
+        await ref.read(orderServiceProvider).updateStatus(
+              order.id,
+              OrderStatus.awaitingShipping.dbValue,
+              username,
             );
-          }
+      } else if (hasPhone) {
+        final selectedItems = order.items
+            .where((i) => i.id != null && selected.contains(i.id))
+            .toList();
+        final itemsBlock = selectedItems
+            .map((it) => '${it.name}\n×${formatQty(it.quantity)}')
+            .join('\n\n');
+        if (mounted && await confirmSendCustomerWhatsApp(context)) {
+          await _openWhatsAppToPhone(
+            phone,
+            _waCustomerPartialReady(lang, order, itemsBlock: itemsBlock),
+          );
         }
       }
 
@@ -2679,21 +2689,28 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     if (!mounted) return;
     final phone = customer.phones.isNotEmpty ? customer.phones.first : '';
     if (phone.trim().isEmpty) {
+      // No phone — warn the user but still update the status.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             _trLocale(
               context,
               l10n,
-              'orderWorkflowNoPhoneCustomer',
-              en: 'Customer has no phone for WhatsApp.',
-              he: 'אין מספר טלפון ללקוח ל-WhatsApp.',
-              ar: 'لا يوجد هاتف للعميل لواتساب.',
+              'orderWorkflowNoPhoneCustomerStatusUpdated',
+              en:
+                  'Note: WhatsApp not sent — customer has no phone. Status was still updated.',
+              he:
+                  'שים לב: לא נשלחה הודעת WhatsApp — אין מספר טלפון ללקוח. הסטטוס עודכן בכל זאת.',
+              ar:
+                  'ملاحظة: لم يتم إرسال رسالة واتساب — لا يوجد هاتف للعميل. تم تحديث الحالة على أي حال.',
             ),
+            style: GoogleFonts.assistant(),
           ),
+          backgroundColor: AppTheme.warning,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
         ),
       );
-      return;
     }
 
     await _updateOrderStatus(order.id, OrderStatus.preparing.dbValue);
@@ -2713,28 +2730,37 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         await ref.read(customerServiceProvider).getById(order.customerId);
     if (!mounted) return;
     final phone = customer.phones.isNotEmpty ? customer.phones.first : '';
-    if (phone.trim().isEmpty) {
+    final hasPhone = phone.trim().isNotEmpty;
+
+    if (!hasPhone) {
+      // No phone — warn the user but still update the status.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             _trLocale(
               context,
               l10n,
-              'orderWorkflowNoPhoneCustomer',
-              en: 'Customer has no phone for WhatsApp.',
-              he: 'אין מספר טלפון ללקוח ל-WhatsApp.',
-              ar: 'لا يوجد هاتف للعميل لواتساب.',
+              'orderWorkflowNoPhoneCustomerStatusUpdated',
+              en:
+                  'Note: WhatsApp not sent — customer has no phone. Status was still updated.',
+              he:
+                  'שים לב: לא נשלחה הודעת WhatsApp — אין מספר טלפון ללקוח. הסטטוס עודכן בכל זאת.',
+              ar:
+                  'ملاحظة: لم يتم إرسال رسالة واتساب — لا يوجد هاتف للعميل. تم تحديث الحالة على أي حال.',
             ),
+            style: GoogleFonts.assistant(),
           ),
+          backgroundColor: AppTheme.warning,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
         ),
       );
-      return;
-    }
-
-    final langPickup = Localizations.localeOf(context).languageCode;
-    if (mounted && await confirmSendCustomerWhatsApp(context)) {
-      await _openWhatsAppToPhone(
-          phone, _waCustomerReadyPickup(langPickup, order));
+    } else {
+      final langPickup = Localizations.localeOf(context).languageCode;
+      if (mounted && await confirmSendCustomerWhatsApp(context)) {
+        await _openWhatsAppToPhone(
+            phone, _waCustomerReadyPickup(langPickup, order));
+      }
     }
 
     if (!mounted) return;
