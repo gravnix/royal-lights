@@ -20,6 +20,7 @@ void main() async {
     anonKey: SupabaseConfig.supabaseAnonKey,
     authOptions: const FlutterAuthClientOptions(
       localStorage: SessionLocalStorage(),
+      autoRefreshToken: true,
     ),
   );
   runApp(const ProviderScope(child: RoyalLightApp()));
@@ -55,7 +56,8 @@ class RoyalLightApp extends ConsumerWidget {
       },
       home: authState.when(
         data: (state) {
-          if (state.session != null) {
+          final session = state.session;
+          if (session != null && !session.isExpired) {
             return const InactivityLogoutWrapper(child: AppShell());
           }
           return const LoginScreen();

@@ -51,4 +51,16 @@ class AuthService {
   }
 
   bool get isAuthenticated => _client.auth.currentSession != null;
+
+  /// True if a session exists AND its JWT is not expired.
+  bool get hasValidSession {
+    final session = _client.auth.currentSession;
+    return session != null && !session.isExpired;
+  }
+
+  /// True if a session exists but its JWT is expired.
+  bool get isSessionExpired {
+    final session = _client.auth.currentSession;
+    return session != null && session.isExpired;
+  }
 }
