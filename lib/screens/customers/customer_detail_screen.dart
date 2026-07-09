@@ -813,9 +813,9 @@ class _HeroBannerState extends ConsumerState<_HeroBanner> {
           top: false,
           child: Padding(
             padding: const EdgeInsets.only(bottom: 10),
-            child: Column(
+      child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: [
+        children: [
                 Padding(
                   padding:
                       const EdgeInsetsDirectional.only(start: 18, end: 18, top: 6),
@@ -1007,12 +1007,12 @@ class _HeroBannerState extends ConsumerState<_HeroBanner> {
               borderRadius: BorderRadius.circular(28),
               child: SizedBox(
                 height: 168,
-                width: double.infinity,
+            width: double.infinity,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
                     DecoratedBox(
-                      decoration: BoxDecoration(
+            decoration: BoxDecoration(
                         image: hasPhoto
                             ? DecorationImage(
                                 image: CachedNetworkImageProvider(
@@ -1088,11 +1088,11 @@ class _HeroBannerState extends ConsumerState<_HeroBanner> {
               avatar,
               const SizedBox(width: 18),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                     Text(
-                      customer.cardName,
+                  customer.cardName,
                       style: GoogleFonts.assistant(
                         fontSize: 26,
                         fontWeight: FontWeight.w800,
@@ -1103,7 +1103,7 @@ class _HeroBannerState extends ConsumerState<_HeroBanner> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      customer.customerName,
+                  customer.customerName,
                       style: GoogleFonts.assistant(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
@@ -1177,7 +1177,7 @@ class _HeroBannerState extends ConsumerState<_HeroBanner> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Icon(
-                                    Icons.account_balance_wallet_outlined,
+                  Icons.account_balance_wallet_outlined,
                                     color: AppTheme.error,
                                     size: 16,
                                   ),
@@ -1196,9 +1196,9 @@ class _HeroBannerState extends ConsumerState<_HeroBanner> {
                                       fontSize: 13,
                                       fontWeight: FontWeight.w800,
                                     ),
-                                  ),
-                                ],
-                              ),
+                ),
+              ],
+            ),
                             ),
                         ],
                       ),
@@ -1488,7 +1488,7 @@ class _ContactInfoCard extends StatelessWidget {
       ),
       icon: Icons.contact_page_outlined,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           _ContactRow(
             icon: Icons.person_outline_rounded,
@@ -1537,19 +1537,19 @@ class _ContactRow extends StatelessWidget {
             children: <Widget>[
               Icon(icon, size: 22, color: AppTheme.secondary),
               const SizedBox(width: 14),
-              Expanded(
-                child: Text(
+        Expanded(
+          child: Text(
                   text,
                   textAlign: TextAlign.start,
                   style: GoogleFonts.assistant(
                     fontSize: 15,
                     color: AppTheme.onSurface,
-                    fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w600,
                     height: 1.4,
-                  ),
-                ),
-              ),
-            ],
+            ),
+          ),
+        ),
+      ],
           ),
         ),
       ),
@@ -1850,16 +1850,16 @@ class _OrdersListSection extends StatelessWidget {
           color: AppTheme.secondary.withValues(alpha: 0.28),
         ),
       ),
-      child: Text(
+            child: Text(
         n.toString(),
         style: GoogleFonts.assistant(
           fontSize: 13,
           fontWeight: FontWeight.w800,
           color: AppTheme.secondary,
         ),
-      ),
-    );
-  }
+            ),
+          );
+        }
 
   @override
   Widget build(BuildContext context) {
@@ -1927,13 +1927,13 @@ class _OrdersListSection extends StatelessWidget {
                   child: ListView.separated(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    itemCount: orders.length,
+          itemCount: orders.length,
                     separatorBuilder: (_, __) => Divider(
                       height: 1,
                       thickness: 1,
                       color: AppTheme.outlineVariant.withValues(alpha: 0.12),
                     ),
-                    itemBuilder: (context, index) {
+          itemBuilder: (context, index) {
                       return _OrderRow(order: orders[index], l10n: l10n);
                     },
                   ),
@@ -2059,20 +2059,20 @@ class _OrderRow extends StatelessWidget {
                       horizontal: 10,
                       vertical: 4,
                     ),
-                    decoration: BoxDecoration(
+          decoration: BoxDecoration(
                       color: statusColor.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(
                         color: statusColor.withValues(alpha: 0.35),
                       ),
-                    ),
-                    child: Text(
+          ),
+          child: Text(
                       statusLabel,
                       style: GoogleFonts.assistant(
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
-                        color: statusColor,
-                      ),
+              color: statusColor,
+            ),
                     ),
                   ),
                 ],

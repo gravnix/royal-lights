@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:image_picker/image_picker.dart';
 import '../../config/app_animations.dart';
+import '../../config/app_date_format.dart';
 import '../../config/app_theme.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/customer.dart';
@@ -16,6 +17,8 @@ import 'customer_detail_screen.dart';
 import '../../widgets/editorial_screen_title.dart';
 import '../../widgets/app_dropdown_styles.dart';
 import '../../theme/order_status_colors.dart';
+
+enum _CustomersViewMode { cards, list }
 
 class CustomersScreen extends ConsumerStatefulWidget {
   const CustomersScreen({super.key});
@@ -27,6 +30,11 @@ class CustomersScreen extends ConsumerStatefulWidget {
 class _CustomersScreenState extends ConsumerState<CustomersScreen> {
   final _searchCtrl = TextEditingController();
   String _customersDebtSort = 'highToLow'; // highToLow | lowToHigh
+  /// `none` | `customerCreated` | `orderCreated`
+  String _dateFilterKind = 'none';
+  DateTime? _dateFrom;
+  DateTime? _dateTo;
+  _CustomersViewMode _viewMode = _CustomersViewMode.cards;
 
   int _gridCols(double width) {
     // Aim: iPad 11" should fit 4 cards per row.
@@ -70,6 +78,387 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
       'ar' => ar,
       _ => en,
     };
+  }
+
+  bool get _isDateFilterActive =>
+      _dateFilterKind != 'none' && (_dateFrom != null || _dateTo != null);
+
+  bool _isInDateRange(DateTime? value) {
+    if (value == null) return false;
+    final day = DateTime(value.year, value.month, value.day);
+    if (_dateFrom != null) {
+      final from = DateTime(_dateFrom!.year, _dateFrom!.month, _dateFrom!.day);
+      if (day.isBefore(from)) return false;
+    }
+    if (_dateTo != null) {
+      final to = DateTime(_dateTo!.year, _dateTo!.month, _dateTo!.day);
+      if (day.isAfter(to)) return false;
+    }
+    return true;
+  }
+
+  Set<String> _customerIdsWithOrdersInRange(List<Order> orders) {
+    final ids = <String>{};
+    for (final o in orders) {
+      if (_isInDateRange(o.createdAt)) {
+        ids.add(o.customerId);
+      }
+    }
+    return ids;
+  }
+
+  Future<void> _pickCustomerFilterDate(bool isFrom) async {
+    final initial = isFrom ? _dateFrom : _dateTo;
+    final picked = await showDatePicker(
+      context: context,
+      locale: Localizations.localeOf(context),
+      initialDate: initial ?? DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      helpText: _l10nOrLocale(
+        context,
+        AppLocalizations.of(context),
+        'selectDate',
+        en: 'Select date',
+        he: 'בחר תאריך',
+        ar: 'اختر التاريخ',
+      ),
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        if (isFrom) {
+          _dateFrom = picked;
+        } else {
+          _dateTo = picked;
+        }
+      });
+    }
+  }
+
+  String _formatDay(DateTime d) => AppDateFormat.table(d);
+
+  void _clearDateFilters() {
+    setState(() {
+      _dateFilterKind = 'none';
+      _dateFrom = null;
+      _dateTo = null;
+    });
+  }
+
+  Widget _buildCountPill(int count) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.secondaryContainer.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: AppTheme.outlineVariant.withValues(alpha: 0.14),
+        ),
+      ),
+      child: Text(
+        'סה״כ לקוחות: $count',
+        style: GoogleFonts.assistant(
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+          color: AppTheme.secondary,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildViewModeToggle(
+    BuildContext context,
+    AppLocalizations? l10n,
+  ) {
+    Widget modeButton({
+      required _CustomersViewMode mode,
+      required IconData icon,
+      required String tooltipKey,
+      required String en,
+      required String he,
+      required String ar,
+    }) {
+      final selected = _viewMode == mode;
+      return Tooltip(
+        message: _l10nOrLocale(context, l10n, tooltipKey, en: en, he: he, ar: ar),
+        child: InkWell(
+          onTap: () => setState(() => _viewMode = mode),
+          borderRadius: BorderRadius.circular(14),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            width: 44,
+            height: paymentsFilterControlHeight - 8,
+            decoration: BoxDecoration(
+              color: selected
+                  ? AppTheme.secondary.withValues(alpha: 0.16)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(
+              icon,
+              size: 22,
+              color: selected ? AppTheme.secondary : AppTheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      height: paymentsFilterControlHeight,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: AppTheme.outlineVariant.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          modeButton(
+            mode: _CustomersViewMode.cards,
+            icon: Icons.grid_view_rounded,
+            tooltipKey: 'customersViewCards',
+            en: 'Card view',
+            he: 'תצוגת כרטיסים',
+            ar: 'عرض البطاقات',
+          ),
+          modeButton(
+            mode: _CustomersViewMode.list,
+            icon: Icons.view_list_rounded,
+            tooltipKey: 'customersViewList',
+            en: 'List view',
+            he: 'תצוגת רשימה',
+            ar: 'عرض القائمة',
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _dateFilterOptionLabel(
+    BuildContext context,
+    AppLocalizations? l10n,
+    String kind, {
+    required bool compact,
+  }) {
+    return switch (kind) {
+      'customerCreated' => compact
+          ? _l10nOrLocale(
+              context,
+              l10n,
+              'filterByCustomerCreatedShort',
+              en: 'Customer',
+              he: 'יצירת לקוח',
+              ar: 'العميل',
+            )
+          : _l10nOrLocale(
+              context,
+              l10n,
+              'filterByCustomerCreated',
+              en: 'Customer created',
+              he: 'תאריך יצירת לקוח',
+              ar: 'تاريخ إنشاء العميل',
+            ),
+      'orderCreated' => compact
+          ? _l10nOrLocale(
+              context,
+              l10n,
+              'filterByOrderCreatedShort',
+              en: 'Order',
+              he: 'יצירת הזמנה',
+              ar: 'الطلب',
+            )
+          : _l10nOrLocale(
+              context,
+              l10n,
+              'filterByOrderCreated',
+              en: 'Order created',
+              he: 'תאריך יצירת הזמנה',
+              ar: 'تاريخ إنشاء الطلب',
+            ),
+      _ => _l10nOrLocale(
+          context,
+          l10n,
+          'customersDateFilterAll',
+          en: 'All dates',
+          he: 'כל התאריכים',
+          ar: 'كل التواريخ',
+        ),
+    };
+  }
+
+  List<Widget> _buildInlineDateFilterWidgets(
+    BuildContext context,
+    AppLocalizations? l10n,
+  ) {
+    final showDateButtons = _dateFilterKind != 'none';
+    final tonalStyle = FilledButton.styleFrom(
+      backgroundColor: AppTheme.surfaceContainerLowest,
+      foregroundColor: AppTheme.onSurface,
+      elevation: 0,
+      shadowColor: Colors.transparent,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      minimumSize: Size(0, paymentsFilterControlHeight),
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(
+          color: AppTheme.outlineVariant.withValues(alpha: 0.35),
+        ),
+      ),
+    );
+
+    return [
+      SizedBox(
+        width: 252,
+        height: paymentsFilterControlHeight,
+        child: Center(
+          child: DropdownMenu<String>(
+            key: ValueKey(
+              'date_${Localizations.localeOf(context).languageCode}_$_dateFilterKind',
+            ),
+            initialSelection: _dateFilterKind,
+            width: 252,
+            menuStyle: appDropdownMenuStyle(),
+            inputDecorationTheme: paymentsFilterInputDecorationTheme(),
+            textStyle: GoogleFonts.assistant(
+              color: AppTheme.onSurface,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+            ),
+            decorationBuilder: (context, MenuController controller) {
+              return animatedDropdownDecorationBuilder(
+                label: Text(
+                  _l10nOrLocale(
+                    context,
+                    l10n,
+                    'customersFilterByDate',
+                    en: 'Filter by date',
+                    he: 'סינון לפי תאריך',
+                    ar: 'تصفية حسب التاريخ',
+                  ),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                iconSize: 18,
+              )(context, controller);
+            },
+            onSelected: (v) => setState(() {
+              _dateFilterKind = v ?? 'none';
+              if (_dateFilterKind == 'none') {
+                _dateFrom = null;
+                _dateTo = null;
+              }
+            }),
+            dropdownMenuEntries: [
+              DropdownMenuEntry<String>(
+                value: 'none',
+                label: _dateFilterOptionLabel(context, l10n, 'none', compact: true),
+              ),
+              DropdownMenuEntry<String>(
+                value: 'customerCreated',
+                label: _dateFilterOptionLabel(
+                  context,
+                  l10n,
+                  'customerCreated',
+                  compact: true,
+                ),
+                labelWidget: Text(
+                  _dateFilterOptionLabel(
+                    context,
+                    l10n,
+                    'customerCreated',
+                    compact: false,
+                  ),
+                  style: GoogleFonts.assistant(fontWeight: FontWeight.w600),
+                ),
+              ),
+              DropdownMenuEntry<String>(
+                value: 'orderCreated',
+                label: _dateFilterOptionLabel(
+                  context,
+                  l10n,
+                  'orderCreated',
+                  compact: true,
+                ),
+                labelWidget: Text(
+                  _dateFilterOptionLabel(
+                    context,
+                    l10n,
+                    'orderCreated',
+                    compact: false,
+                  ),
+                  style: GoogleFonts.assistant(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      if (showDateButtons) ...[
+        FilledButton.tonalIcon(
+          onPressed: () => _pickCustomerFilterDate(true),
+          icon: const Icon(Icons.date_range_rounded, size: 18),
+          label: Text(
+            _dateFrom != null
+                ? _formatDay(_dateFrom!)
+                : _l10nOrLocale(
+                    context,
+                    l10n,
+                    'dateFrom',
+                    en: 'From',
+                    he: 'מתאריך',
+                    ar: 'من',
+                  ),
+            style: GoogleFonts.assistant(
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+          style: tonalStyle,
+        ),
+        FilledButton.tonalIcon(
+          onPressed: () => _pickCustomerFilterDate(false),
+          icon: const Icon(Icons.event_note_rounded, size: 18),
+          label: Text(
+            _dateTo != null
+                ? _formatDay(_dateTo!)
+                : _l10nOrLocale(
+                    context,
+                    l10n,
+                    'dateTo',
+                    en: 'To',
+                    he: 'עד תאריך',
+                    ar: 'إلى',
+                  ),
+            style: GoogleFonts.assistant(
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+          style: tonalStyle,
+        ),
+      ],
+      if (_isDateFilterActive)
+        IconButton(
+          onPressed: _clearDateFilters,
+          tooltip: _l10nOrLocale(
+            context,
+            l10n,
+            'clearFilter',
+            en: 'Clear filter',
+            he: 'נקה מסנן',
+            ar: 'إزالة التصفية',
+          ),
+          icon: const Icon(Icons.filter_alt_off_rounded, size: 20),
+          color: AppTheme.secondary,
+        ),
+    ];
   }
 
   @override
@@ -127,6 +516,17 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
                 c.phones.any((p) => p.toLowerCase().contains(q));
           }).toList();
 
+          if (_isDateFilterActive) {
+            if (_dateFilterKind == 'customerCreated') {
+              filtered =
+                  filtered.where((c) => _isInDateRange(c.createdAt)).toList();
+            } else if (_dateFilterKind == 'orderCreated' &&
+                ordersAsync.hasValue) {
+              final ids = _customerIdsWithOrdersInRange(ordersAsync.value!);
+              filtered = filtered.where((c) => ids.contains(c.id)).toList();
+            }
+          }
+
           // Sort by remaining debt (balance to pay).
           filtered.sort((a, b) {
             final ad = a.remainingDebt;
@@ -147,6 +547,7 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
                   children: [
                     EditorialScreenTitle(
                       title: l10n?.tr('customers') ?? 'Customers',
+                      trailing: _buildCountPill(filtered.length),
                       padding: const EdgeInsets.only(
                         left: 32,
                         right: 32,
@@ -156,9 +557,30 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(32, 0, 32, 0),
-                      child: LayoutBuilder(
-                        builder: (context, c) {
-                          final isTight = c.maxWidth < 760;
+                      child: Theme(
+                        data: Theme.of(context).copyWith(
+                          inputDecorationTheme:
+                              paymentsFilterInputDecorationTheme(),
+                        ),
+                        child: LayoutBuilder(
+                          builder: (context, c) {
+                          final isTight = c.maxWidth < 1100;
+                          const sortWidth = 220.0;
+                          const dateDropWidth = 252.0;
+                          const viewToggleWidth = 104.0;
+                          const gap = 12.0;
+                          var reserved =
+                              sortWidth + dateDropWidth + viewToggleWidth + gap * 3;
+                          if (_dateFilterKind != 'none') {
+                            reserved += 240 + gap; // from + to buttons
+                          }
+                          if (_isDateFilterActive) {
+                            reserved += 48 + gap; // clear icon
+                          }
+                          final searchWidth = isTight
+                              ? c.maxWidth
+                              : (c.maxWidth - reserved).clamp(220.0, 360.0);
+
                           final searchField = Material(
                             elevation: 2,
                             shadowColor: Colors.black.withValues(alpha: 0.06),
@@ -221,12 +643,14 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
                             ),
                           );
 
-                          final sort = DropdownMenu<String>(
+                          final sort = SizedBox(
+                            width: sortWidth,
+                            child: DropdownMenu<String>(
                             key: ValueKey(
                               '${Localizations.localeOf(context).languageCode}_$_customersDebtSort',
                             ),
                             initialSelection: _customersDebtSort,
-                            width: isTight ? 240 : 260,
+                            width: sortWidth,
                             menuStyle: appDropdownMenuStyle(),
                             inputDecorationTheme:
                                 appDropdownInputDecorationTheme().copyWith(
@@ -280,52 +704,40 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
                                 ),
                               ),
                             ],
-                          );
-
-                          final countPill = Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 9,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppTheme.secondaryContainer.withValues(
-                                alpha: 0.45,
-                              ),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                color: AppTheme.outlineVariant.withValues(
-                                  alpha: 0.14,
-                                ),
-                              ),
-                            ),
-                            child: Text(
-                              'סה״כ לקוחות: ${customers.length}',
-                              style: GoogleFonts.assistant(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: AppTheme.secondary,
-                              ),
-                            ),
+                          ),
                           );
 
                           return Padding(
                             padding: const EdgeInsets.only(top: 10),
-                            child: Wrap(
-                              spacing: 12,
-                              runSpacing: 10,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              alignment: WrapAlignment.spaceBetween,
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                SizedBox(
-                                  width: isTight ? c.maxWidth : c.maxWidth - 260 - 12 - 190,
-                                  child: searchField,
+                                Expanded(
+                                  child: Wrap(
+                                    spacing: gap,
+                                    runSpacing: 10,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      SizedBox(
+                                        width: searchWidth,
+                                        child: searchField,
+                                      ),
+                                      sort,
+                                      ..._buildInlineDateFilterWidgets(
+                                        context,
+                                        l10n,
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                                sort,
-                                countPill,
+                                const SizedBox(width: gap),
+                                _buildViewModeToggle(context, l10n),
                               ],
                             ),
                           );
                         },
+                      ),
                       ),
                     ),
                     const SizedBox(height: 24),
@@ -356,7 +768,7 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
                     ),
                   ),
                 )
-              else
+              else if (_viewMode == _CustomersViewMode.cards)
                 SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 32),
                   sliver: SliverLayoutBuilder(
@@ -366,7 +778,6 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
                       return SliverGrid(
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: cols,
-                          // Slightly shorter cards so 4-column layouts breathe.
                           childAspectRatio: 0.78,
                           crossAxisSpacing: 14,
                           mainAxisSpacing: 14,
@@ -385,14 +796,10 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
                                 latestOpenStatus:
                                     latestOpenStatusMap[customer.id],
                                 l10n: l10n,
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) => CustomerDetailScreen(
-                                          customer: customer),
-                                    ),
-                                  );
-                                },
+                                onTap: () => _openCustomerDetail(
+                                  context,
+                                  customer,
+                                ),
                               ),
                             );
                           },
@@ -400,6 +807,58 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
                         ),
                       );
                     },
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  sliver: SliverMainAxisGroup(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: AppTheme.surfaceContainerHighest
+                                .withValues(alpha: 0.35),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: AppTheme.outlineVariant
+                                  .withValues(alpha: 0.12),
+                            ),
+                          ),
+                          child: _CustomerListHeader(l10n: l10n),
+                        ),
+                      ),
+                      const SliverToBoxAdapter(child: SizedBox(height: 8)),
+                      SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final customer = filtered[index];
+                            return Padding(
+                              padding: EdgeInsets.only(
+                                bottom: index < filtered.length - 1 ? 10 : 0,
+                              ),
+                              child: StaggeredFadeIn(
+                                index: index,
+                                stepMilliseconds: 40,
+                                child: _CustomerListRow(
+                                  customer: customer,
+                                  openOrders: openOrdersMap[customer.id] ?? 0,
+                                  totalOrders: totalOrdersMap[customer.id] ?? 0,
+                                  latestOpenStatus:
+                                      latestOpenStatusMap[customer.id],
+                                  l10n: l10n,
+                                  onTap: () => _openCustomerDetail(
+                                    context,
+                                    customer,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                          childCount: filtered.length,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               // Bottom padding (clear FAB)
@@ -414,6 +873,14 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> {
             style: const TextStyle(color: AppTheme.error),
           ),
         ),
+      ),
+    );
+  }
+
+  void _openCustomerDetail(BuildContext context, Customer customer) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CustomerDetailScreen(customer: customer),
       ),
     );
   }
@@ -1379,6 +1846,426 @@ class _CustomerCard extends StatelessWidget {
                 fontWeight: FontWeight.w700,
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOMER LIST — shared fixed column widths for aligned rows
+// ─────────────────────────────────────────────────────────────────────────────
+abstract final class _CustomerListColumns {
+  static const double avatar = 48;
+  static const double innerGap = 14;
+  static const double colGap = 12;
+  static const double phone = 118;
+  static const double status = 236;
+  static const double payment = 92;
+  static const double debt = 112;
+  static const EdgeInsets rowPadding =
+      EdgeInsets.symmetric(horizontal: 16, vertical: 12);
+}
+
+class _CustomerListHeader extends StatelessWidget {
+  final AppLocalizations? l10n;
+
+  const _CustomerListHeader({required this.l10n});
+
+  String _label(
+    BuildContext context,
+    String key, {
+    required String en,
+    required String he,
+    required String ar,
+  }) {
+    final t = l10n?.tr(key) ?? '';
+    if (t.isNotEmpty && t != key) return t;
+    return switch (Localizations.localeOf(context).languageCode) {
+      'he' => he,
+      'ar' => ar,
+      _ => en,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final labelStyle = GoogleFonts.assistant(
+      fontSize: 12,
+      fontWeight: FontWeight.w700,
+      color: AppTheme.onSurfaceVariant,
+      letterSpacing: 0.2,
+    );
+
+    return Padding(
+      padding: _CustomerListColumns.rowPadding,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const SizedBox(width: _CustomerListColumns.avatar),
+          const SizedBox(width: _CustomerListColumns.innerGap),
+          Expanded(
+            child: Text(
+              _label(
+                context,
+                'customerName',
+                en: 'Customer',
+                he: 'לקוח',
+                ar: 'العميل',
+              ),
+              style: labelStyle,
+            ),
+          ),
+          const SizedBox(width: _CustomerListColumns.colGap),
+          SizedBox(
+            width: _CustomerListColumns.phone,
+            child: Text(
+              _label(
+                context,
+                'phones',
+                en: 'Phone',
+                he: 'טלפון',
+                ar: 'الهاتف',
+              ),
+              style: labelStyle,
+            ),
+          ),
+          const SizedBox(width: _CustomerListColumns.colGap),
+          SizedBox(
+            width: _CustomerListColumns.status,
+            child: Text(
+              _label(
+                context,
+                'orders',
+                en: 'Orders',
+                he: 'הזמנות',
+                ar: 'الطلبات',
+              ),
+              style: labelStyle,
+            ),
+          ),
+          const SizedBox(width: _CustomerListColumns.colGap),
+          SizedBox(
+            width: _CustomerListColumns.payment,
+            child: Text(
+              _label(
+                context,
+                'paymentStatus',
+                en: 'Payment',
+                he: 'תשלום',
+                ar: 'الدفع',
+              ),
+              textAlign: TextAlign.center,
+              style: labelStyle,
+            ),
+          ),
+          const SizedBox(width: _CustomerListColumns.colGap),
+          SizedBox(
+            width: _CustomerListColumns.debt,
+            child: Text(
+              _label(
+                context,
+                'remainingDebt',
+                en: 'Balance',
+                he: 'יתרה',
+                ar: 'الرصيد',
+              ),
+              textAlign: TextAlign.end,
+              style: labelStyle,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOMER LIST ROW — Compact row for list view mode
+// ─────────────────────────────────────────────────────────────────────────────
+class _CustomerListRow extends StatelessWidget {
+  final Customer customer;
+  final int openOrders;
+  final int totalOrders;
+  final OrderStatus? latestOpenStatus;
+  final AppLocalizations? l10n;
+  final VoidCallback onTap;
+
+  const _CustomerListRow({
+    required this.customer,
+    required this.openOrders,
+    required this.totalOrders,
+    required this.latestOpenStatus,
+    required this.l10n,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final debt = customer.remainingDebt;
+    final isUnpaid = debt > 0;
+    final isOverpaid = debt < 0;
+    final isZero = debt == 0;
+
+    String trOrLocale(
+      String key, {
+      required String en,
+      required String he,
+      required String ar,
+    }) {
+      final t = l10n?.tr(key) ?? '';
+      if (t.isNotEmpty && t != key) return t;
+      return switch (Localizations.localeOf(context).languageCode) {
+        'he' => he,
+        'ar' => ar,
+        _ => en,
+      };
+    }
+
+    final isOpen = openOrders > 0 && latestOpenStatus != null;
+    final statusLabel = isOpen
+        ? orderStatusLocalizedLabel(latestOpenStatus!, l10n)
+        : switch (Localizations.localeOf(context).languageCode) {
+            'ar' => 'لا توجد طلبات مفتוحة',
+            'en' => 'No open orders',
+            _ => 'אין הזמנות פתוחות',
+          };
+    final statusColor =
+        isOpen ? orderStatusColor(latestOpenStatus!) : AppTheme.outline;
+
+    final paymentLabel = isOverpaid
+        ? trOrLocale(
+            'balanceOverpaidLabel',
+            en: 'Overpaid',
+            he: 'עודף ששולם',
+            ar: 'مدفوعات زائدة',
+          )
+        : (isZero
+            ? trOrLocale('paid', en: 'Paid', he: 'שולם', ar: 'مدفوع')
+            : trOrLocale(
+                'unpaid',
+                en: 'Need to pay',
+                he: 'צריך לשלם',
+                ar: 'بحاجة للدفع',
+              ));
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppTheme.outlineVariant.withValues(alpha: 0.12),
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color.fromRGBO(26, 28, 28, 0.04),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: _CustomerListColumns.rowPadding,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                _buildAvatar(),
+                const SizedBox(width: _CustomerListColumns.innerGap),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        customer.customerName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.assistant(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: AppTheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        customer.cardName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.assistant(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: _CustomerListColumns.colGap),
+                SizedBox(
+                  width: _CustomerListColumns.phone,
+                  child: Text(
+                    customer.phones.isNotEmpty ? customer.phones.first : '—',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.assistant(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: AppTheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: _CustomerListColumns.colGap),
+                SizedBox(
+                  width: _CustomerListColumns.status,
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: statusColor,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '$statusLabel • $openOrders/$totalOrders',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.assistant(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: _CustomerListColumns.colGap),
+                SizedBox(
+                  width: _CustomerListColumns.payment,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isUnpaid
+                            ? AppTheme.error.withValues(alpha: 0.12)
+                            : AppTheme.success.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        paymentLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.assistant(
+                          color: isUnpaid ? AppTheme.error : AppTheme.success,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: _CustomerListColumns.colGap),
+                SizedBox(
+                  width: _CustomerListColumns.debt,
+                  child: Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: Directionality(
+                      textDirection: TextDirection.ltr,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        children: [
+                          Text(
+                            '₪',
+                            style: GoogleFonts.assistant(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: isUnpaid
+                                  ? AppTheme.error
+                                  : (isOverpaid
+                                      ? AppTheme.success
+                                      : AppTheme.onSurface),
+                            ),
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            isOverpaid
+                                ? '+${(-debt).toStringAsFixed(2)}'
+                                : debt.toStringAsFixed(2),
+                            style: GoogleFonts.assistant(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: isUnpaid
+                                  ? AppTheme.error
+                                  : (isOverpaid
+                                      ? AppTheme.success
+                                      : AppTheme.onSurface),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAvatar() {
+    final hasPhoto =
+        customer.imageUrl != null && customer.imageUrl!.trim().isNotEmpty;
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: AppTheme.surfaceContainerHighest,
+        border: Border.all(
+          color: AppTheme.outlineVariant.withValues(alpha: 0.2),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: hasPhoto
+          ? CachedNetworkImage(
+              imageUrl: customer.imageUrl!,
+              fit: BoxFit.cover,
+              placeholder: (_, __) => _avatarPlaceholder(),
+              errorWidget: (_, __, ___) => _avatarPlaceholder(),
+            )
+          : _avatarPlaceholder(),
+    );
+  }
+
+  Widget _avatarPlaceholder() {
+    return ColoredBox(
+      color: AppTheme.secondary.withValues(alpha: 0.12),
+      child: Center(
+        child: Text(
+          customer.cardName.isNotEmpty
+              ? customer.cardName[0].toUpperCase()
+              : '?',
+          style: GoogleFonts.assistant(
+            color: AppTheme.secondary,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),
