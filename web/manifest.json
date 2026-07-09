@@ -1,11 +1,11 @@
 {
-    "name": "royal_lights_app",
-    "short_name": "royal_lights_app",
+    "name": "Royal Lights",
+    "short_name": "Royal Lights",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Royal Lights Management System",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -1,6 +1,7 @@
-# Temp/local files
+# Temp/local/secrets files
 build_log.txt
 create_user.dart
+lib/config/secrets.dart
 
 # Miscellaneous
 *.class

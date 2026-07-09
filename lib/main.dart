@@ -1,19 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config/supabase_config.dart';
+import 'services/session_local_storage.dart';
 import 'config/app_theme.dart';
 import 'l10n/app_localizations.dart';
 import 'providers/providers.dart';
 import 'screens/login_screen.dart';
 import 'widgets/app_shell.dart';
+import 'widgets/inactivity_logout_wrapper.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initializeDateFormatting();
   await Supabase.initialize(
     url: SupabaseConfig.supabaseUrl,
     anonKey: SupabaseConfig.supabaseAnonKey,
+    authOptions: const FlutterAuthClientOptions(
+      localStorage: SessionLocalStorage(),
+      autoRefreshToken: true,
+    ),
   );
   runApp(const ProviderScope(child: RoyalLightApp()));
 }
@@ -48,8 +56,9 @@ class RoyalLightApp extends ConsumerWidget {
       },
       home: authState.when(
         data: (state) {
-          if (state.session != null) {
-            return const AppShell();
+          final session = state.session;
+          if (session != null && !session.isExpired) {
+            return const InactivityLogoutWrapper(child: AppShell());
           }
           return const LoginScreen();
         },

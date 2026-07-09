@@ -3,6 +3,7 @@ import 'order_item.dart';
 enum OrderStatus {
   active,
   preparing,
+  sentToSupplier,
   inAssembly,
   awaitingShipping,
   handled,
@@ -17,6 +18,8 @@ extension OrderStatusExtension on OrderStatus {
         return 'Active';
       case OrderStatus.preparing:
         return 'Preparing';
+      case OrderStatus.sentToSupplier:
+        return 'Sent to Supplier';
       case OrderStatus.inAssembly:
         return 'In Assembly';
       case OrderStatus.awaitingShipping:
@@ -31,11 +34,14 @@ extension OrderStatusExtension on OrderStatus {
   }
 
   static OrderStatus fromString(String value) {
-    switch (value) {
+    final v = value.trim();
+    switch (v) {
       case 'Active':
         return OrderStatus.active;
       case 'Preparing':
         return OrderStatus.preparing;
+      case 'Sent to Supplier':
+        return OrderStatus.sentToSupplier;
       case 'In Assembly':
         return OrderStatus.inAssembly;
       case 'Awaiting Shipping':
@@ -47,6 +53,18 @@ extension OrderStatusExtension on OrderStatus {
       case 'Canceled':
         return OrderStatus.canceled;
       default:
+        // Avoid collapsing unknown DB values to Active (hides real workflow).
+        final lower = v.toLowerCase();
+        if (lower == 'preparing') return OrderStatus.preparing;
+        if (lower == 'sent to supplier') return OrderStatus.sentToSupplier;
+        if (lower == 'in assembly') return OrderStatus.inAssembly;
+        if (lower == 'awaiting shipping') return OrderStatus.awaitingShipping;
+        if (lower == 'handled') return OrderStatus.handled;
+        if (lower == 'delivered') return OrderStatus.delivered;
+        if (lower == 'canceled' || lower == 'cancelled') {
+          return OrderStatus.canceled;
+        }
+        if (lower == 'active') return OrderStatus.active;
         return OrderStatus.active;
     }
   }
@@ -55,6 +73,7 @@ extension OrderStatusExtension on OrderStatus {
   static List<OrderStatus> get all => [
         OrderStatus.active,
         OrderStatus.preparing,
+        OrderStatus.sentToSupplier,
         OrderStatus.inAssembly,
         OrderStatus.awaitingShipping,
         OrderStatus.handled,
@@ -69,8 +88,17 @@ class Order {
   final int? orderNumber;
   final bool assemblyRequired;
   final DateTime? assemblyDate;
+  final DateTime? deliveryDate;
+  /// One-time installation / assembly fee (ILS), admin-entered.
+  final double assemblyPrice;
   final OrderStatus status;
   final double totalPrice;
+  /// Whether 18% VAT is applied to the order total. Default true.
+  final bool vatEnabled;
+  /// Discount percentage (0–100) applied to the VAT-inclusive grand total.
+  final double discountPercentage;
+  /// Discount type: 'percentage' or 'fixed_amount'. Default 'percentage'.
+  final String discountType;
   final String? notes;
   final String? createdBy;
   final String? updatedBy;
@@ -88,8 +116,13 @@ class Order {
     this.orderNumber,
     this.assemblyRequired = false,
     this.assemblyDate,
+    this.deliveryDate,
+    this.assemblyPrice = 0,
     this.status = OrderStatus.active,
     this.totalPrice = 0,
+    this.vatEnabled = true,
+    this.discountPercentage = 0,
+    this.discountType = 'percentage',
     this.notes,
     this.createdBy,
     this.updatedBy,
@@ -107,12 +140,20 @@ class Order {
       orderNumber: json['order_number'] as int?,
       assemblyRequired: json['assembly_required'] as bool? ?? false,
       assemblyDate: json['assembly_date'] != null
-          ? DateTime.parse(json['assembly_date'])
+          ? DateTime.parse(json['assembly_date'] as String)
           : null,
+      deliveryDate: json['delivery_date'] != null
+          ? DateTime.parse(json['delivery_date'] as String)
+          : null,
+      assemblyPrice: (json['assembly_price'] as num?)?.toDouble() ?? 0,
       status: OrderStatusExtension.fromString(
         json['status'] as String? ?? 'Active',
       ),
       totalPrice: (json['total_price'] as num?)?.toDouble() ?? 0,
+      vatEnabled: json['vat_enabled'] as bool? ?? true,
+      discountPercentage:
+          (json['discount_percentage'] as num?)?.toDouble() ?? 0,
+      discountType: (json['discount_type'] as String?) ?? 'percentage',
       notes: json['notes'] as String?,
       createdBy: json['created_by'] as String?,
       updatedBy: json['updated_by'] as String?,
@@ -141,8 +182,13 @@ class Order {
       'customer_id': customerId,
       'assembly_required': assemblyRequired,
       'assembly_date': assemblyDate?.toIso8601String().split('T').first,
+      'delivery_date': deliveryDate?.toIso8601String().split('T').first,
+      'assembly_price': assemblyPrice,
       'status': status.dbValue,
       'total_price': totalPrice,
+      'vat_enabled': vatEnabled,
+      'discount_percentage': discountPercentage,
+      'discount_type': discountType,
       'notes': notes,
       'created_by': createdBy,
       'updated_by': updatedBy,
@@ -155,8 +201,13 @@ class Order {
     int? orderNumber,
     bool? assemblyRequired,
     DateTime? assemblyDate,
+    DateTime? deliveryDate,
+    double? assemblyPrice,
     OrderStatus? status,
     double? totalPrice,
+    bool? vatEnabled,
+    double? discountPercentage,
+    String? discountType,
     String? notes,
     String? createdBy,
     String? updatedBy,
@@ -170,8 +221,13 @@ class Order {
       orderNumber: orderNumber ?? this.orderNumber,
       assemblyRequired: assemblyRequired ?? this.assemblyRequired,
       assemblyDate: assemblyDate ?? this.assemblyDate,
+      deliveryDate: deliveryDate ?? this.deliveryDate,
+      assemblyPrice: assemblyPrice ?? this.assemblyPrice,
       status: status ?? this.status,
       totalPrice: totalPrice ?? this.totalPrice,
+      vatEnabled: vatEnabled ?? this.vatEnabled,
+      discountPercentage: discountPercentage ?? this.discountPercentage,
+      discountType: discountType ?? this.discountType,
       notes: notes ?? this.notes,
       createdBy: createdBy ?? this.createdBy,
       updatedBy: updatedBy ?? this.updatedBy,

@@ -7,6 +7,7 @@
 CREATE TYPE order_status AS ENUM (
   'Active',
   'Preparing',
+  'Sent to Supplier',
   'In Assembly',
   'Awaiting Shipping',
   'Handled',
@@ -82,6 +83,8 @@ CREATE TABLE IF NOT EXISTS orders (
   order_number SERIAL,
   assembly_required BOOLEAN NOT NULL DEFAULT FALSE,
   assembly_date DATE,
+  delivery_date DATE,
+  assembly_price NUMERIC(12,2) NOT NULL DEFAULT 0,
   status order_status NOT NULL DEFAULT 'Active',
   total_price NUMERIC(12,2) NOT NULL DEFAULT 0,
   notes TEXT,
@@ -100,12 +103,19 @@ CREATE TABLE IF NOT EXISTS order_items (
   image_url TEXT,              -- 3. Upload/Camera image path
   quantity INTEGER NOT NULL DEFAULT 1, -- 4. Quantity
   extras TEXT,                 -- 5. Extras
-  notes TEXT,                  -- 6. Notes
-  price NUMERIC(12,2) NOT NULL DEFAULT 0, -- 7. Price
+  notes TEXT,                  -- 6. Notes (order form: per-line supplier WhatsApp text)
+  price NUMERIC(12,2) NOT NULL DEFAULT 0, -- 7. Unit price
+  extras_price NUMERIC(12,2) NOT NULL DEFAULT 0, -- Add-ons price (per line)
   assembly_required BOOLEAN NOT NULL DEFAULT FALSE, -- 8. Assembly Required
   room_id UUID REFERENCES rooms(id) ON DELETE SET NULL, -- 9. Room dropdown
   supplier_id UUID REFERENCES suppliers(id) ON DELETE SET NULL, -- 10. Supplier dropdown
+  delivery_date DATE, -- per-line shipping / delivery (optional)
   existing_in_store BOOLEAN NOT NULL DEFAULT TRUE, -- 11. Existing In Store
+  ready_for_pickup BOOLEAN NOT NULL DEFAULT FALSE, -- line is ready for pickup (partial readiness)
+  inventory_item_id UUID REFERENCES inventory_items(id) ON DELETE SET NULL, -- link to inventory for stock deduction
+  inventory_deducted BOOLEAN NOT NULL DEFAULT FALSE, -- stock deducted once order is completed
+  warranty_years INTEGER NOT NULL DEFAULT 0, -- 0 = none, 3 or 5 = years
+  warranty_start_date DATE, -- when warranty starts counting (usually delivery date)
   created_by TEXT,
   updated_by TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -229,3 +239,30 @@ INSERT INTO rooms (name) VALUES
   ('מרפסת'),       -- Balcony
   ('משרד'),        -- Office
   ('אחר');         -- Other
+
+-- ============================================================
+-- STORAGE: payment receipts (Supabase Dashboard → Storage)
+-- ============================================================
+-- 1. Create bucket: id = payment-receipts, name = payment-receipts, Public = ON
+-- 2. Run policies (adjust if your project already defines storage policies):
+--
+-- CREATE POLICY "payment_receipts_public_read"
+--   ON storage.objects FOR SELECT
+--   USING (bucket_id = 'payment-receipts');
+--
+-- CREATE POLICY "payment_receipts_authenticated_insert"
+--   ON storage.objects FOR INSERT TO authenticated
+--   WITH CHECK (bucket_id = 'payment-receipts');
+--
+-- CREATE POLICY "payment_receipts_authenticated_update"
+--   ON storage.objects FOR UPDATE TO authenticated
+--   USING (bucket_id = 'payment-receipts');
+--
+-- CREATE POLICY "payment_receipts_authenticated_delete"
+--   ON storage.objects FOR DELETE TO authenticated
+--   USING (bucket_id = 'payment-receipts');
+
+-- ============================================================
+-- MIGRATIONS (run once on existing databases)
+-- ============================================================
+-- ALTER TABLE order_items ADD COLUMN IF NOT EXISTS extras_price NUMERIC(12,2) NOT NULL DEFAULT 0;

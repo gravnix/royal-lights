@@ -3,11 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/auth_service.dart';
 import '../services/customer_service.dart';
+import '../services/fixing_service.dart';
 import '../services/order_service.dart';
 import '../services/payment_service.dart';
 import '../services/supplier_service.dart';
 import '../services/room_service.dart';
+import '../services/inventory_service.dart';
 import '../models/customer.dart';
+import '../models/fixing_ticket.dart';
+import '../models/inventory_item.dart';
 import '../models/order.dart';
 import '../models/payment.dart';
 import '../models/supplier.dart';
@@ -66,6 +70,14 @@ final roomServiceProvider = Provider<RoomService>((ref) {
   return RoomService(ref.watch(supabaseClientProvider));
 });
 
+final fixingServiceProvider = Provider<FixingService>((ref) {
+  return FixingService(ref.watch(supabaseClientProvider));
+});
+
+final inventoryServiceProvider = Provider<InventoryService>((ref) {
+  return InventoryService(ref.watch(supabaseClientProvider));
+});
+
 // ─── DATA PROVIDERS (AsyncNotifier pattern) ───
 
 // Customers
@@ -99,6 +111,52 @@ final suppliersProvider = FutureProvider.autoDispose<List<Supplier>>((
 ) async {
   final service = ref.watch(supplierServiceProvider);
   return service.getAll();
+});
+
+// Inventory items
+final inventoryItemsProvider =
+    FutureProvider.autoDispose<List<InventoryItem>>((ref) async {
+  final service = ref.watch(inventoryServiceProvider);
+  return service.getAll();
+});
+
+/// Bidirectional supplier↔brand index derived from saved inventory rows.
+/// `brandsBySupplier[supplierId]` → set of brand strings paired with that supplier.
+/// `suppliersByBrand[brand]` → set of supplier IDs paired with that brand.
+class InventoryBrandSupplierMap {
+  final Map<String, Set<String>> brandsBySupplier;
+  final Map<String, Set<String>> suppliersByBrand;
+  final List<String> allBrands;
+
+  const InventoryBrandSupplierMap({
+    required this.brandsBySupplier,
+    required this.suppliersByBrand,
+    required this.allBrands,
+  });
+}
+
+final inventoryBrandSupplierMapProvider =
+    FutureProvider.autoDispose<InventoryBrandSupplierMap>((ref) async {
+  final items = await ref.watch(inventoryItemsProvider.future);
+  final brandsBySupplier = <String, Set<String>>{};
+  final suppliersByBrand = <String, Set<String>>{};
+  final allBrands = <String>{};
+  for (final it in items) {
+    final brand = it.brand?.trim();
+    if (brand == null || brand.isEmpty) continue;
+    allBrands.add(brand);
+    final supplierId = it.supplierId;
+    if (supplierId != null && supplierId.isNotEmpty) {
+      brandsBySupplier.putIfAbsent(supplierId, () => <String>{}).add(brand);
+      suppliersByBrand.putIfAbsent(brand, () => <String>{}).add(supplierId);
+    }
+  }
+  final sortedBrands = allBrands.toList()..sort();
+  return InventoryBrandSupplierMap(
+    brandsBySupplier: brandsBySupplier,
+    suppliersByBrand: suppliersByBrand,
+    allBrands: sortedBrands,
+  );
 });
 
 // Rooms
@@ -137,6 +195,13 @@ final customerPaymentsProvider = FutureProvider.family
       return service.getByCustomer(customerId);
     });
 
+// Fixing tickets (open / pending only)
+final fixingTicketsProvider = FutureProvider<List<FixingTicket>>((ref) async {
+  final service = ref.watch(fixingServiceProvider);
+  // Ensure UI never spins forever if network/migrations hang.
+  return service.getOpenTickets().timeout(const Duration(seconds: 10));
+});
+
 // Dashboard stats
 final openOrdersCountProvider = FutureProvider.autoDispose<int>((ref) async {
   final service = ref.watch(orderServiceProvider);
@@ -166,4 +231,30 @@ class NavIndexNotifier extends Notifier<int> {
 
 final selectedNavIndexProvider = NotifierProvider<NavIndexNotifier, int>(
   NavIndexNotifier.new,
+);
+
+/// When non-null, [PaymentsScreen] lists only this customer's payments (all entries).
+class PaymentsCustomerFilterNotifier extends Notifier<Customer?> {
+  @override
+  Customer? build() => null;
+
+  void setFilter(Customer? customer) => state = customer;
+}
+
+final paymentsCustomerFilterProvider =
+    NotifierProvider<PaymentsCustomerFilterNotifier, Customer?>(
+  PaymentsCustomerFilterNotifier.new,
+);
+
+/// When non-null, [OrdersScreen] lists only this customer's orders (same idea as [paymentsCustomerFilterProvider]).
+class OrdersCustomerFilterNotifier extends Notifier<Customer?> {
+  @override
+  Customer? build() => null;
+
+  void setFilter(Customer? customer) => state = customer;
+}
+
+final ordersCustomerFilterProvider =
+    NotifierProvider<OrdersCustomerFilterNotifier, Customer?>(
+  OrdersCustomerFilterNotifier.new,
 );

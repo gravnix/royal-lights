@@ -1,4 +1,4 @@
-enum PaymentType { cash, credit, check }
+enum PaymentType { cash, credit, check, transfer }
 
 extension PaymentTypeExtension on PaymentType {
   String get dbValue {
@@ -9,6 +9,8 @@ extension PaymentTypeExtension on PaymentType {
         return 'Credit';
       case PaymentType.check:
         return 'Check';
+      case PaymentType.transfer:
+        return 'Transfer';
     }
   }
 
@@ -20,6 +22,8 @@ extension PaymentTypeExtension on PaymentType {
         return PaymentType.credit;
       case 'Check':
         return PaymentType.check;
+      case 'Transfer':
+        return PaymentType.transfer;
       default:
         return PaymentType.cash;
     }

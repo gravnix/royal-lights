@@ -60,7 +60,28 @@ class CustomerService {
     return url;
   }
 
+  /// Delete customer photo from Supabase Storage and database.
+  Future<void> deletePhoto(String customerId) async {
+    const bucket = 'customer-photos';
+    final path = '$customerId/photo.jpg';
+    
+    // Attempt to remove from storage (ignore if it doesn't exist)
+    try {
+      await _client.storage.from(bucket).remove([path]);
+    } catch (_) {}
+
+    // Update customer record
+    await update(customerId, {'image_url': null});
+  }
+
   Future<void> delete(String id) async {
+    // Best-effort: remove stored photo as well (ignore missing/permission errors).
+    const bucket = 'customer-photos';
+    final path = '$id/photo.jpg';
+    try {
+      await _client.storage.from(bucket).remove([path]);
+    } catch (_) {}
+
     await _client.from('customers').delete().eq('id', id);
   }
 }

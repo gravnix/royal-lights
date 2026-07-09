@@ -1,5 +1,11 @@
+import 'secrets.dart';
+
 class SupabaseConfig {
-  static const String supabaseUrl = 'https://tuhhgptspaoxfwfzvtlf.supabase.co';
-  static const String supabaseAnonKey =
-      'sb_publishable_x8BNd7Cl7K-cjnC76eZu5g_-u6hqJas';
+  // ⚡ This will default to false locally, but Vercel can set it to true!
+  static const bool isProduction =
+      bool.fromEnvironment('IS_PROD', defaultValue: false);
+  static String get supabaseUrl =>
+      isProduction ? Secrets.prodSupabaseUrl : Secrets.testSupabaseUrl;
+  static String get supabaseAnonKey =>
+      isProduction ? Secrets.prodSupabaseKey : Secrets.testSupabaseKey;
 }

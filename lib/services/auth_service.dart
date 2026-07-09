@@ -14,16 +14,16 @@ class AuthService {
       _client.auth.currentUser?.userMetadata?['username'] as String? ??
       'unknown';
 
-  /// Convert phone number to a synthetic email for Supabase Email Auth
-  String _phoneToEmail(String phone) {
-    final cleaned = phone.replaceAll(RegExp(r'[^\d]'), '');
-    return '$cleaned@royallight.store';
+  /// Convert username to a synthetic email for Supabase Email Auth
+  String _usernameToEmail(String username) {
+    final cleaned = username.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '').toLowerCase();
+    return '${cleaned.isEmpty ? "user" : cleaned}@royallight.store';
   }
 
-  /// Sign in with phone + username
-  Future<AuthResponse> signIn(String phone, String username) async {
+  /// Sign in with username
+  Future<AuthResponse> signIn(String usernameInput, String password) async {
     return await _client.auth
-        .signInWithPassword(email: _phoneToEmail(phone), password: username)
+        .signInWithPassword(email: _usernameToEmail(usernameInput), password: password)
         .timeout(
           const Duration(seconds: 15),
           onTimeout: () =>
@@ -31,13 +31,13 @@ class AuthService {
         );
   }
 
-  /// Sign up with phone + username
-  Future<AuthResponse> signUp(String phone, String username) async {
+  /// Sign up with username
+  Future<AuthResponse> signUp(String username, String password) async {
     return await _client.auth
         .signUp(
-          email: _phoneToEmail(phone),
-          password: username,
-          data: {'username': username, 'full_name': username, 'phone': phone},
+          email: _usernameToEmail(username),
+          password: password,
+          data: {'username': username, 'full_name': username, 'phone': ''},
         )
         .timeout(
           const Duration(seconds: 15),
@@ -51,4 +51,16 @@ class AuthService {
   }
 
   bool get isAuthenticated => _client.auth.currentSession != null;
+
+  /// True if a session exists AND its JWT is not expired.
+  bool get hasValidSession {
+    final session = _client.auth.currentSession;
+    return session != null && !session.isExpired;
+  }
+
+  /// True if a session exists but its JWT is expired.
+  bool get isSessionExpired {
+    final session = _client.auth.currentSession;
+    return session != null && session.isExpired;
+  }
 }

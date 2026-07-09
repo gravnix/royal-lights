@@ -1,0 +1,24 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Flutter web (iPad / LAN)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "web-server",
+      "toolArgs": [
+        "--web-hostname=${input:macLanIp}",
+        "--web-port=8080"
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "macLanIp",
+      "type": "promptString",
+      "description": "Your Mac's Wi‑Fi IP (System Settings → Network). Same host the iPad opens in Safari.",
+      "default": "192.168.68.103"
+    }
+  ]
+}
