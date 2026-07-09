@@ -2,6 +2,7 @@
 build_log.txt
 create_user.dart
 lib/config/secrets.dart
+royal-lights1/
 
 # Miscellaneous
 *.class
