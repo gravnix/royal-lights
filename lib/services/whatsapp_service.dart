@@ -45,6 +45,36 @@ class WhatsAppService {
     return sendMessage(phone, text);
   }
 
+  /// Sends a WhatsApp message with a document URL (PDF link).
+  /// Falls back to a text message containing the URL if the Edge Function
+  /// doesn't support the `mediaUrl` / `type` fields yet.
+  static Future<bool> sendDocument(
+    String phone,
+    String documentUrl,
+    String caption,
+  ) async {
+    final jid = _toJid(phone);
+    try {
+      final response = await _supabase.functions
+          .invoke(
+            'whatsapp-sender',
+            body: {
+              'to': jid,
+              'message': caption,
+              'mediaUrl': documentUrl,
+              'type': 'document',
+              'fileName': 'quote.pdf',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.status == 200) return true;
+    } catch (_) {
+      // Edge Function may not support document type yet — fall through.
+    }
+    // Fallback: send as plain text with the link.
+    return sendMessage(phone, '$caption\n\n$documentUrl');
+  }
+
   /// Helper to send new Purchase Order to a Supplier
   static Future<bool> sendSupplierPurchaseOrder(
       String phone, String supplierName, String orderId) {

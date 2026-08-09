@@ -47,6 +47,9 @@ dependencies:
   google_fonts: ^8.0.2
   mobile_scanner: ^7.0.1
   web: ^1.1.0
+  pdf: ^3.11.1
+  printing: ^5.14.2
+  http: ^1.2.2
 
 dev_dependencies:
   flutter_test:
@@ -75,6 +78,12 @@ flutter:
     - lib/l10n/app_ar.arb
     - lib/l10n/app_en.arb
     - assets/branding/logo.png
+    - assets/fonts/NotoSans-Regular.ttf
+    - assets/fonts/NotoSans-Bold.ttf
+    - assets/fonts/NotoSansHebrew-Regular.ttf
+    - assets/fonts/NotoSansHebrew-Bold.ttf
+    - assets/fonts/NotoSansArabic-Regular.ttf
+    - assets/fonts/NotoSansArabic-Bold.ttf
     - assets/
 
   # An image asset can refer to one or more resolution-specific "variants", see
