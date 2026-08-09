@@ -15,6 +15,7 @@ import '../../l10n/app_localizations.dart';
 import '../../models/customer.dart';
 import '../../models/order.dart';
 import '../../models/order_item.dart';
+import '../../models/quote_item.dart';
 import '../../models/supplier.dart';
 import '../../models/inventory_item.dart';
 import '../../providers/providers.dart';
@@ -27,12 +28,16 @@ class OrderFormScreen extends ConsumerStatefulWidget {
   final String? orderId;
   final Customer? initialCustomer;
 
+  /// Pre-fills items from an accepted quote (quote → order conversion).
+  final List<QuoteItem>? initialQuoteItems;
+
   /// Opens the bottom notes/totals drawer after load (e.g. Orders list "Send to supplier").
   final bool openBottomDrawerInitially;
   const OrderFormScreen({
     super.key,
     this.orderId,
     this.initialCustomer,
+    this.initialQuoteItems,
     this.openBottomDrawerInitially = false,
   });
 
@@ -233,6 +238,19 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
     if (widget.orderId != null) {
       _isEdit = true;
       _loadOrder();
+    } else if (widget.initialQuoteItems != null &&
+        widget.initialQuoteItems!.isNotEmpty) {
+      _items = widget.initialQuoteItems!.map((qi) {
+        final row = _ItemRow();
+        row.itemNumberCtrl.text = qi.itemNumber ?? '';
+        row.nameCtrl.text = qi.name;
+        row.quantityCtrl.text = formatQty(qi.quantity);
+        row.extrasCtrl.text = qi.extras ?? '';
+        row.priceCtrl.text = qi.price.toString();
+        row.extrasPriceCtrl.text =
+            qi.extrasPrice == 0 ? '' : qi.extrasPrice.toString();
+        return row;
+      }).toList();
     } else {
       _items.add(_ItemRow());
     }

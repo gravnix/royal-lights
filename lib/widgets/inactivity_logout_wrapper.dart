@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../config/app_theme.dart';
 import '../providers/providers.dart';
@@ -32,7 +33,6 @@ class _InactivityLogoutWrapperState
   void initState() {
     super.initState();
     _resetTimer();
-    // Listen to focus changes (indicates user is interacting with the app)
     _focusNode.addListener(_onActivity);
   }
 
@@ -46,41 +46,57 @@ class _InactivityLogoutWrapperState
 
   void _resetTimer() {
     _timer?.cancel();
+    if (_signingOut) return;
     _timer = Timer(InactivityLogoutWrapper.timeout, _handleTimeout);
   }
 
   Future<void> _handleTimeout() async {
     if (_signingOut || !mounted) return;
     _signingOut = true;
+    _timer?.cancel();
+
     try {
-      // Show a modal popup informing the user before forcing the logout/redirect.
-      // The popup MUST be acknowledged (no barrier dismiss) — pressing OK signs
-      // the user out and routes them to LoginScreen.
-      await _showInactivityDialog();
+      final confirmed = await _showInactivityDialog();
+      if (!confirmed || !mounted) return;
 
-      if (!mounted) return;
-      await ref.read(authServiceProvider).signOut();
+      // Navigate FIRST while this State is still mounted. Signing out first
+      // rebuilds MaterialApp.home and can dispose this widget before we clear
+      // nested routes (order form, customer detail, …), leaving the user stuck
+      // on the previous screen.
+      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (_) => false,
+      );
 
-      // Force-navigate to LoginScreen, bypassing any PopScope / WillPopScope
-      // guards (e.g. the order form's unsaved-changes prompt). Using
-      // pushAndRemoveUntil with a (route) => false predicate pushes the new
-      // route and REMOVES all previous routes — no popping is performed, so
-      // PopScope cannot intercept and block the navigation.
-      if (mounted) {
-        Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (route) => false,
-        );
-      }
+      await _signOutLocally();
     } catch (_) {
-      // Auth state stream drives navigation; swallow transient errors.
+      // Still try to clear the session if navigation somehow failed.
+      await _signOutLocally();
     } finally {
       _signingOut = false;
     }
   }
 
-  Future<void> _showInactivityDialog() async {
-    if (!mounted) return;
+  /// Clear the local session even if the network is down, so authStateProvider
+  /// flips to logged-out and main.dart keeps showing LoginScreen.
+  Future<void> _signOutLocally() async {
+    try {
+      await ref
+          .read(authServiceProvider)
+          .signOut()
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      try {
+        await Supabase.instance.client.auth.signOut(
+          scope: SignOutScope.local,
+        );
+      } catch (_) {}
+    }
+  }
+
+  /// Returns `true` when the user taps OK.
+  Future<bool> _showInactivityDialog() async {
+    if (!mounted) return false;
     final lang = Localizations.localeOf(context).languageCode;
     final title = switch (lang) {
       'he' => 'פג תוקף ההפעלה',
@@ -100,7 +116,7 @@ class _InactivityLogoutWrapperState
       _ => 'OK',
     };
 
-    await showDialog<void>(
+    final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       useRootNavigator: true,
@@ -124,7 +140,7 @@ class _InactivityLogoutWrapperState
           actionsAlignment: MainAxisAlignment.center,
           actions: [
             FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(),
+              onPressed: () => Navigator.of(ctx, rootNavigator: true).pop(true),
               child: Text(
                 okLabel,
                 style: GoogleFonts.assistant(fontWeight: FontWeight.w700),
@@ -134,6 +150,8 @@ class _InactivityLogoutWrapperState
         ),
       ),
     );
+
+    return result == true;
   }
 
   void _onActivity([Object? _]) {

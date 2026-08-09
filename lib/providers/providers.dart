@@ -9,11 +9,13 @@ import '../services/payment_service.dart';
 import '../services/supplier_service.dart';
 import '../services/room_service.dart';
 import '../services/inventory_service.dart';
+import '../services/quote_service.dart';
 import '../models/customer.dart';
 import '../models/fixing_ticket.dart';
 import '../models/inventory_item.dart';
 import '../models/order.dart';
 import '../models/payment.dart';
+import '../models/quote.dart';
 import '../models/supplier.dart';
 import '../models/room.dart';
 import 'dart:ui';
@@ -76,6 +78,10 @@ final fixingServiceProvider = Provider<FixingService>((ref) {
 
 final inventoryServiceProvider = Provider<InventoryService>((ref) {
   return InventoryService(ref.watch(supabaseClientProvider));
+});
+
+final quoteServiceProvider = Provider<QuoteService>((ref) {
+  return QuoteService(ref.watch(supabaseClientProvider));
 });
 
 // ─── DATA PROVIDERS (AsyncNotifier pattern) ───
@@ -186,6 +192,24 @@ final customerOrdersWithItemsProvider = FutureProvider.family
       if (customerId.isEmpty) return [];
       final service = ref.watch(orderServiceProvider);
       return service.getByCustomerWithItems(customerId);
+    });
+
+// Customer quotes
+final customerQuotesProvider = FutureProvider.family
+    .autoDispose<List<Quote>, String>((ref, customerId) async {
+      try {
+        final service = ref.watch(quoteServiceProvider);
+        return await service.getByCustomer(customerId);
+      } catch (e) {
+        // Table may not exist yet if migrations haven't been applied.
+        final msg = e.toString();
+        if (msg.contains('PGRST205') ||
+            (msg.contains('quotes') && msg.contains('schema cache')) ||
+            msg.contains('Could not find the table')) {
+          return <Quote>[];
+        }
+        rethrow;
+      }
     });
 
 // Customer payments

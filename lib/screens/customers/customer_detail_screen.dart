@@ -1,9 +1,13 @@
+import 'dart:typed_data';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart' show DateFormat, NumberFormat;
+import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/app_date_format.dart';
@@ -13,7 +17,11 @@ import '../../models/customer.dart';
 import '../../models/order.dart';
 import '../../models/order_item.dart';
 import '../../models/payment.dart';
+import '../../models/inventory_item.dart';
+import '../../models/quote.dart';
+import '../../models/quote_item.dart';
 import '../../providers/providers.dart';
+import '../../services/quote_pdf_service.dart';
 import '../../services/whatsapp_service.dart';
 import '../../theme/order_status_colors.dart';
 import '../orders/order_form_screen.dart';
@@ -36,6 +44,46 @@ String _trOrLocale(
     'ar' => ar,
     _ => en,
   };
+}
+
+InputDecoration _quoteFieldDecoration({
+  String? labelText,
+  String? hintText,
+  String? prefixText,
+  Widget? prefixIcon,
+  bool isDense = true,
+}) {
+  final border = OutlineInputBorder(
+    borderRadius: BorderRadius.circular(14),
+    borderSide: BorderSide(
+      color: AppTheme.outlineVariant.withValues(alpha: 0.35),
+    ),
+  );
+  return InputDecoration(
+    labelText: labelText,
+    hintText: hintText,
+    prefixText: prefixText,
+    prefixIcon: prefixIcon,
+    isDense: isDense,
+    filled: true,
+    fillColor: AppTheme.surfaceContainerLowest,
+    border: border,
+    enabledBorder: border,
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(14),
+      borderSide: const BorderSide(color: AppTheme.secondary, width: 1.5),
+    ),
+    labelStyle: GoogleFonts.assistant(
+      color: AppTheme.onSurfaceVariant,
+      fontWeight: FontWeight.w600,
+      fontSize: 13,
+    ),
+    hintStyle: GoogleFonts.assistant(
+      color: AppTheme.onSurfaceVariant.withValues(alpha: 0.75),
+      fontWeight: FontWeight.w500,
+      fontSize: 13,
+    ),
+  );
 }
 
 class CustomerDetailScreen extends ConsumerStatefulWidget {
@@ -542,6 +590,18 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
     );
   }
 
+  Future<void> _openQuoteForm(
+      BuildContext context, AppLocalizations? l10n) async {
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => _QuoteFormScreen(customer: _customer),
+      ),
+    );
+    if (result == true && mounted) {
+      ref.invalidate(customerQuotesProvider(_customer.id));
+    }
+  }
+
   void _goToOrdersFiltered() {
     ref.read(ordersCustomerFilterProvider.notifier).setFilter(_customer);
     ref.read(selectedNavIndexProvider.notifier).setIndex(2);
@@ -558,6 +618,7 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
     }
     final ordersAsync = ref.watch(customerOrdersProvider(_customer.id));
     final paymentsAsync = ref.watch(customerPaymentsProvider(_customer.id));
+    final quotesAsync = ref.watch(customerQuotesProvider(_customer.id));
 
     return Scaffold(
       backgroundColor: AppTheme.surfaceContainerLowest,
@@ -584,38 +645,35 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
           ref.invalidate(customersProvider);
           ref.invalidate(customerOrdersProvider(_customer.id));
           ref.invalidate(customerPaymentsProvider(_customer.id));
+          ref.invalidate(customerQuotesProvider(_customer.id));
         },
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final isWide = constraints.maxWidth > 800;
+            // Two columns once there is room; keep quotes on the physical
+            // right even when the app Directionality is RTL.
+            final isWide = constraints.maxWidth > 700;
 
-            final rightColumn = Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                _ContactInfoCard(customer: _customer, l10n: l10n),
-                const SizedBox(height: 24),
-                if (_customer.notes != null && _customer.notes!.isNotEmpty)
-                  _EditableNotesCard(
+            final notesCard = (_customer.notes != null &&
+                    _customer.notes!.isNotEmpty)
+                ? _EditableNotesCard(
                     customerId: _customer.id,
                     initialNotes: _customer.notes ?? '',
                     l10n: l10n,
                     onSaved: (next) {
                       setState(() => _customer = _customer.copyWith(notes: next));
                     },
-                  ),
-                if (_customer.notes == null || _customer.notes!.isEmpty)
-                  _EditableNotesCard(
+                  )
+                : _EditableNotesCard(
                     customerId: _customer.id,
                     initialNotes: '',
                     l10n: l10n,
                     onSaved: (next) {
                       setState(() => _customer = _customer.copyWith(notes: next));
                     },
-                  ),
-              ],
-            );
+                  );
 
-            final leftColumn = Column(
+            // Left: orders + payments (recent activity).
+            final activityColumn = Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
                 _OrdersListSection(
@@ -627,6 +685,22 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
                 _PaymentsListSection(
                   customer: _customer,
                   paymentsAsync: paymentsAsync,
+                  l10n: l10n,
+                ),
+              ],
+            );
+
+            // Right: existing contact/notes sidebar, with quotes under them.
+            final sidebarColumn = Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                _ContactInfoCard(customer: _customer, l10n: l10n),
+                const SizedBox(height: 24),
+                notesCard,
+                const SizedBox(height: 24),
+                _QuotesListSection(
+                  customer: _customer,
+                  quotesAsync: quotesAsync,
                   l10n: l10n,
                 ),
               ],
@@ -648,6 +722,7 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
                         ),
                       );
                     },
+                    onSendQuote: () => _openQuoteForm(context, l10n),
                     onEditDetails: () => _openEditDialog(l10n),
                     onSendPaymentsReport: () =>
                         _sendPaymentsReport(context, l10n),
@@ -667,19 +742,20 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
                   sliver: SliverToBoxAdapter(
                     child: isWide
                         ? Row(
+                            textDirection: TextDirection.ltr,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: <Widget>[
-                              Expanded(flex: 5, child: rightColumn),
+                              Expanded(flex: 6, child: activityColumn),
                               const SizedBox(width: 28),
-                              Expanded(flex: 6, child: leftColumn),
+                              Expanded(flex: 5, child: sidebarColumn),
                             ],
                           )
                         : Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: <Widget>[
-                              rightColumn,
+                              sidebarColumn,
                               const SizedBox(height: 28),
-                              leftColumn,
+                              activityColumn,
                             ],
                           ),
                   ),
@@ -701,6 +777,7 @@ class _HeroBanner extends ConsumerStatefulWidget {
   final AppLocalizations? l10n;
   final AsyncValue<List<Order>> ordersAsync;
   final VoidCallback onNewOrder;
+  final VoidCallback onSendQuote;
   final VoidCallback onEditDetails;
   final VoidCallback onSendPaymentsReport;
   final VoidCallback onSendOrdersReport;
@@ -712,6 +789,7 @@ class _HeroBanner extends ConsumerStatefulWidget {
     required this.l10n,
     required this.ordersAsync,
     required this.onNewOrder,
+    required this.onSendQuote,
     required this.onEditDetails,
     required this.onSendPaymentsReport,
     required this.onSendOrdersReport,
@@ -882,6 +960,7 @@ class _HeroBannerState extends ConsumerState<_HeroBanner> {
     final onSendPaymentsReport = widget.onSendPaymentsReport;
     final onSendOrdersReport = widget.onSendOrdersReport;
     final onNewOrder = widget.onNewOrder;
+    final onSendQuote = widget.onSendQuote;
     final onDeleteCustomer = widget.onDeleteCustomer;
     final deletingCustomer = widget.deletingCustomer;
 
@@ -1300,6 +1379,30 @@ class _HeroBannerState extends ConsumerState<_HeroBanner> {
                             en: 'New payment',
                             he: 'תשלום חדש',
                             ar: 'دفعة جديدة',
+                          ),
+                          style: GoogleFonts.assistant(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      ElevatedButton.icon(
+                        onPressed: onSendQuote,
+                        style: actionStyle(
+                          AppTheme.secondary,
+                          AppTheme.secondary,
+                        ),
+                        icon: const Icon(
+                            Icons.request_quote_outlined, size: 18),
+                        label: Text(
+                          _trOrLocale(
+                            context,
+                            l10n,
+                            'sendQuote',
+                            en: 'Send quote',
+                            he: 'שלח הצעת מחיר',
+                            ar: 'إرسال عرض سعر',
                           ),
                           style: GoogleFonts.assistant(
                             fontWeight: FontWeight.w700,
@@ -1742,6 +1845,9 @@ class _SidebarCard extends StatelessWidget {
   final Widget child;
   final Widget? trailing;
   final Widget? titleBadge;
+  /// When non-null, shows an expand/collapse control in the header.
+  final bool? expanded;
+  final VoidCallback? onToggleExpanded;
 
   const _SidebarCard({
     required this.title,
@@ -1749,6 +1855,8 @@ class _SidebarCard extends StatelessWidget {
     required this.child,
     this.trailing,
     this.titleBadge,
+    this.expanded,
+    this.onToggleExpanded,
   });
 
   @override
@@ -1816,6 +1924,24 @@ class _SidebarCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 titleBadge!,
               ],
+              if (expanded != null && onToggleExpanded != null) ...[
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: expanded!
+                      ? _trOrLocale(context, null, 'collapse',
+                          en: 'Collapse', he: 'כווץ', ar: 'طي')
+                      : _trOrLocale(context, null, 'expand',
+                          en: 'Expand', he: 'הרחב', ar: 'توسيع'),
+                  onPressed: onToggleExpanded,
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    expanded!
+                        ? Icons.unfold_less_rounded
+                        : Icons.unfold_more_rounded,
+                    color: AppTheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
               if (trailing != null) trailing!,
             ],
           ),
@@ -1829,7 +1955,7 @@ class _SidebarCard extends StatelessWidget {
 
 // ─── Orders List Section ────────────────────────────────────────────────────
 
-class _OrdersListSection extends StatelessWidget {
+class _OrdersListSection extends StatefulWidget {
   final AsyncValue<List<Order>> ordersAsync;
   final AppLocalizations? l10n;
   final VoidCallback onViewAll;
@@ -1839,6 +1965,16 @@ class _OrdersListSection extends StatelessWidget {
     required this.l10n,
     required this.onViewAll,
   });
+
+  @override
+  State<_OrdersListSection> createState() => _OrdersListSectionState();
+}
+
+class _OrdersListSectionState extends State<_OrdersListSection> {
+  static const _collapsedCount = 3;
+  bool _expanded = false;
+
+  AppLocalizations? get l10n => widget.l10n;
 
   Widget _countBadge(int n) {
     return Container(
@@ -1850,16 +1986,16 @@ class _OrdersListSection extends StatelessWidget {
           color: AppTheme.secondary.withValues(alpha: 0.28),
         ),
       ),
-            child: Text(
+      child: Text(
         n.toString(),
         style: GoogleFonts.assistant(
           fontSize: 13,
           fontWeight: FontWeight.w800,
           color: AppTheme.secondary,
         ),
-            ),
-          );
-        }
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1880,14 +2016,23 @@ class _OrdersListSection extends StatelessWidget {
       ar: 'عرض الكل',
     );
 
-    return ordersAsync.when(
+    return widget.ordersAsync.when(
       data: (orders) {
+        final canToggle = orders.length > _collapsedCount;
+        final visible = (!_expanded && canToggle)
+            ? orders.take(_collapsedCount).toList()
+            : orders;
+
         return _SidebarCard(
           title: title,
           icon: Icons.receipt_long_rounded,
           titleBadge: orders.isEmpty ? null : _countBadge(orders.length),
+          expanded: canToggle ? _expanded : null,
+          onToggleExpanded: canToggle
+              ? () => setState(() => _expanded = !_expanded)
+              : null,
           trailing: TextButton(
-            onPressed: onViewAll,
+            onPressed: widget.onViewAll,
             style: TextButton.styleFrom(
               foregroundColor: AppTheme.secondary,
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1906,14 +2051,14 @@ class _OrdersListSection extends StatelessWidget {
               ? Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   child: Text(
-                        _trOrLocale(
-                          context,
-                          l10n,
-                          'noOrdersForCustomer',
-                          en: 'This customer has no orders yet.',
-                          he: 'ללקוח זה אין עדיין הזמנות.',
-                          ar: 'لا توجد طلبات لهذا العميل بعد.',
-                        ),
+                    _trOrLocale(
+                      context,
+                      l10n,
+                      'noOrdersForCustomer',
+                      en: 'This customer has no orders yet.',
+                      he: 'ללקוח זה אין עדיין הזמנות.',
+                      ar: 'لا توجد طلبات لهذا العميل بعد.',
+                    ),
                     textAlign: TextAlign.start,
                     style: GoogleFonts.assistant(
                       color: AppTheme.onSurfaceVariant,
@@ -1922,21 +2067,62 @@ class _OrdersListSection extends StatelessWidget {
                     ),
                   ),
                 )
-              : ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-          itemCount: orders.length,
-                    separatorBuilder: (_, __) => Divider(
-                      height: 1,
-                      thickness: 1,
-                      color: AppTheme.outlineVariant.withValues(alpha: 0.12),
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: visible.length,
+                        separatorBuilder: (_, __) => Divider(
+                          height: 1,
+                          thickness: 1,
+                          color: AppTheme.outlineVariant
+                              .withValues(alpha: 0.12),
+                        ),
+                        itemBuilder: (context, index) {
+                          return _OrderRow(
+                              order: visible[index], l10n: l10n);
+                        },
+                      ),
                     ),
-          itemBuilder: (context, index) {
-                      return _OrderRow(order: orders[index], l10n: l10n);
-                    },
-                  ),
+                    if (canToggle) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: TextButton.icon(
+                          onPressed: () =>
+                              setState(() => _expanded = !_expanded),
+                          icon: Icon(
+                            _expanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                            size: 20,
+                          ),
+                          label: Text(
+                            _expanded
+                                ? _trOrLocale(context, l10n, 'showLess',
+                                    en: 'Show less',
+                                    he: 'הצג פחות',
+                                    ar: 'عرض أقل')
+                                : _trOrLocale(context, l10n, 'showMore',
+                                    en: 'Show more (${orders.length - _collapsedCount})',
+                                    he: 'הצג עוד (${orders.length - _collapsedCount})',
+                                    ar: 'عرض المزيد (${orders.length - _collapsedCount})'),
+                            style: GoogleFonts.assistant(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppTheme.secondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
         );
       },
@@ -2320,6 +2506,1738 @@ class _PaymentRow extends StatelessWidget {
               fontSize: 16,
               fontWeight: FontWeight.w800,
               color: AppTheme.success,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Quotes List Section ────────────────────────────────────────────────────
+
+class _QuotesListSection extends ConsumerStatefulWidget {
+  final Customer customer;
+  final AsyncValue<List<Quote>> quotesAsync;
+  final AppLocalizations? l10n;
+
+  const _QuotesListSection({
+    required this.customer,
+    required this.quotesAsync,
+    required this.l10n,
+  });
+
+  @override
+  ConsumerState<_QuotesListSection> createState() => _QuotesListSectionState();
+}
+
+class _QuotesListSectionState extends ConsumerState<_QuotesListSection> {
+  static const _collapsedCount = 3;
+  bool _expanded = false;
+
+  Customer get customer => widget.customer;
+  AppLocalizations? get l10n => widget.l10n;
+
+  Color _statusColor(QuoteStatus s) {
+    switch (s) {
+      case QuoteStatus.sent:
+        return AppTheme.secondary;
+      case QuoteStatus.accepted:
+        return AppTheme.success;
+      case QuoteStatus.converted:
+        return AppTheme.primary;
+      case QuoteStatus.expired:
+        return AppTheme.error;
+    }
+  }
+
+  String _statusLabel(BuildContext context, QuoteStatus s) {
+    switch (s) {
+      case QuoteStatus.sent:
+        return _trOrLocale(context, l10n, 'quoteStatusSent',
+            en: 'Sent', he: 'נשלחה', ar: 'مُرسل');
+      case QuoteStatus.accepted:
+        return _trOrLocale(context, l10n, 'quoteStatusAccepted',
+            en: 'Accepted', he: 'התקבלה', ar: 'مقبول');
+      case QuoteStatus.converted:
+        return _trOrLocale(context, l10n, 'quoteStatusConverted',
+            en: 'Converted', he: 'הומרה', ar: 'محوّل');
+      case QuoteStatus.expired:
+        return _trOrLocale(context, l10n, 'quoteStatusExpired',
+            en: 'Expired', he: 'פגה תוקף', ar: 'منتهي الصلاحية');
+    }
+  }
+
+  Future<void> _viewQuote(BuildContext context, Quote quote) async {
+    final url = quote.pdfUrl?.trim() ?? '';
+    if (url.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _trOrLocale(context, l10n, 'quotePdfMissing',
+                en: 'Quote PDF is not available.',
+                he: 'קובץ הצעת המחיר אינו זמין.',
+                ar: 'ملف عرض السعر غير متوفر.'),
+            style: GoogleFonts.assistant(),
+          ),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+      return;
+    }
+
+    final title = _trOrLocale(
+      context,
+      l10n,
+      'viewQuoteTitle',
+      en: 'Quote #${quote.quoteNumber ?? ''}',
+      he: 'הצעה מס׳ ${quote.quoteNumber ?? ''}',
+      ar: 'عرض رقم ${quote.quoteNumber ?? ''}',
+    );
+    final pdfFileName = 'quote_${quote.quoteNumber ?? quote.id}.pdf';
+
+    // Prefetch so print/share/preview share one download.
+    Uint8List? pdfBytes;
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+      pdfBytes = response.bodyBytes;
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _trOrLocale(context, l10n, 'quotePdfLoadError',
+                en: 'Could not load the quote PDF.',
+                he: 'לא ניתן לטעון את קובץ ההצעה.',
+                ar: 'تعذر تحميل ملف العرض.'),
+            style: GoogleFonts.assistant(),
+          ),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    final bytes = pdfBytes;
+
+    Widget roundAction({
+      required IconData icon,
+      required String label,
+      required VoidCallback onPressed,
+      bool primary = false,
+    }) {
+      final radius = BorderRadius.circular(12);
+      if (primary) {
+        return FilledButton.icon(
+          onPressed: onPressed,
+          icon: Icon(icon, size: 18),
+          label: Text(
+            label,
+            style: GoogleFonts.assistant(fontWeight: FontWeight.w700),
+          ),
+          style: FilledButton.styleFrom(
+            backgroundColor: AppTheme.primary,
+            foregroundColor: AppTheme.onPrimary,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: radius),
+          ),
+        );
+      }
+      return OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        label: Text(
+          label,
+          style: GoogleFonts.assistant(fontWeight: FontWeight.w700),
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppTheme.primary,
+          backgroundColor: AppTheme.surfaceContainerLowest,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          side: const BorderSide(color: AppTheme.primary, width: 1.2),
+          shape: RoundedRectangleBorder(borderRadius: radius),
+        ),
+      );
+    }
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (ctx) {
+        return Dialog(
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 28, vertical: 28),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          child: Container(
+            width: 760,
+            height: MediaQuery.sizeOf(ctx).height * 0.88,
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceContainerLowest,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: AppTheme.outlineVariant.withValues(alpha: 0.25),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.14),
+                  blurRadius: 32,
+                  offset: const Offset(0, 16),
+                ),
+              ],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                // Header — matches app card language.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 12, 14),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppTheme.secondary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          Icons.request_quote_outlined,
+                          color: AppTheme.secondary,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: GoogleFonts.assistant(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 18,
+                                color: AppTheme.onSurface,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Align(
+                              alignment: AlignmentDirectional.centerStart,
+                              child: Container(
+                                height: 3,
+                                width: 40,
+                                decoration: BoxDecoration(
+                                  color: AppTheme.secondary,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Material(
+                        color: AppTheme.surfaceContainerHighest
+                            .withValues(alpha: 0.65),
+                        borderRadius: BorderRadius.circular(12),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () => Navigator.of(ctx).pop(),
+                          child: const SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: Icon(
+                              Icons.close_rounded,
+                              color: AppTheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(
+                  height: 1,
+                  color: AppTheme.outlineVariant.withValues(alpha: 0.25),
+                ),
+                // Preview — no built-in black action bar.
+                Expanded(
+                  child: ColoredBox(
+                    color: AppTheme.surfaceContainerLow,
+                    child: PdfPreview(
+                      build: (format) async => bytes,
+                      allowPrinting: false,
+                      allowSharing: false,
+                      canChangeOrientation: false,
+                      canChangePageFormat: false,
+                      canDebug: false,
+                      useActions: false,
+                      pdfFileName: pdfFileName,
+                      previewPageMargin: const EdgeInsets.all(18),
+                      padding: const EdgeInsets.all(12),
+                    ),
+                  ),
+                ),
+                Divider(
+                  height: 1,
+                  color: AppTheme.outlineVariant.withValues(alpha: 0.25),
+                ),
+                // Rounded action buttons matching the app.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                  child: Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      roundAction(
+                        icon: Icons.open_in_new_rounded,
+                        label: _trOrLocale(context, l10n, 'openInBrowser',
+                            en: 'Open', he: 'פתח', ar: 'فتح'),
+                        onPressed: () async {
+                          await launchUrl(
+                            Uri.parse(url),
+                            mode: LaunchMode.externalApplication,
+                          );
+                        },
+                      ),
+                      roundAction(
+                        icon: Icons.download_rounded,
+                        label: _trOrLocale(context, l10n, 'download',
+                            en: 'Download', he: 'הורדה', ar: 'تنزيل'),
+                        onPressed: () async {
+                          await Printing.sharePdf(
+                            bytes: bytes,
+                            filename: pdfFileName,
+                          );
+                        },
+                      ),
+                      roundAction(
+                        icon: Icons.print_rounded,
+                        label: _trOrLocale(context, l10n, 'print',
+                            en: 'Print', he: 'הדפס', ar: 'طباعة'),
+                        onPressed: () async {
+                          await Printing.layoutPdf(
+                            onLayout: (format) async => bytes,
+                            name: pdfFileName,
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _convertToOrder(
+      BuildContext context, WidgetRef ref, Quote quote) async {
+    final fullQuote = await ref.read(quoteServiceProvider).getById(quote.id);
+    if (!context.mounted) return;
+
+    final username = ref.read(currentUsernameProvider);
+    final customers = ref.read(customersProvider).value;
+    final cust =
+        customers?.where((c) => c.id == fullQuote.customerId).firstOrNull;
+
+    await ref
+        .read(quoteServiceProvider)
+        .updateStatus(quote.id, 'Converted', username);
+
+    if (!context.mounted) return;
+
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => OrderFormScreen(
+          initialCustomer: cust,
+          initialQuoteItems: fullQuote.items,
+        ),
+      ),
+    );
+
+    if (context.mounted) {
+      ref.invalidate(customerQuotesProvider(customer.id));
+      ref.invalidate(ordersProvider);
+      ref.invalidate(customerOrdersProvider(customer.id));
+
+      if (result == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _trOrLocale(context, l10n, 'quoteConverted',
+                  en: 'Quote converted to order',
+                  he: 'הצעת המחיר הומרה להזמנה',
+                  ar: 'تم تحويل العرض إلى طلب'),
+              style: GoogleFonts.assistant(),
+            ),
+            backgroundColor: AppTheme.success,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _quoteRow(BuildContext context, WidgetRef ref, Quote quote) {
+    final created = quote.createdAt ?? DateTime.now();
+    final dateStr = AppDateFormat.table(created);
+    final statusColor = _statusColor(quote.status);
+    final statusText = _statusLabel(context, quote.status);
+    final canConvert =
+        quote.status == QuoteStatus.sent || quote.status == QuoteStatus.accepted;
+    final hasPdf = (quote.pdfUrl ?? '').trim().isNotEmpty;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: hasPdf ? () => _viewQuote(context, quote) : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color:
+                      AppTheme.surfaceContainerHighest.withValues(alpha: 0.65),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppTheme.outlineVariant.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.request_quote_outlined,
+                  color: AppTheme.secondary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '#${quote.quoteNumber ?? quote.id.substring(0, 6)}',
+                      style: GoogleFonts.assistant(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      dateStr,
+                      style: GoogleFonts.assistant(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '₪${quote.totalPrice.toStringAsFixed(0)}',
+                    style: GoogleFonts.assistant(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: statusColor.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: Text(
+                      statusText,
+                      style: GoogleFonts.assistant(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: statusColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: _trOrLocale(context, l10n, 'viewQuote',
+                    en: 'View quote', he: 'צפה בהצעה', ar: 'عرض العرض'),
+                onPressed: () => _viewQuote(context, quote),
+                icon: Icon(
+                  Icons.visibility_outlined,
+                  color: hasPdf
+                      ? AppTheme.secondary
+                      : AppTheme.onSurfaceVariant.withValues(alpha: 0.45),
+                ),
+              ),
+              if (canConvert) ...[
+                const SizedBox(width: 4),
+                SizedBox(
+                  height: 36,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _convertToOrder(context, ref, quote),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.surfaceContainerLowest,
+                      foregroundColor: AppTheme.primary,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: const BorderSide(
+                          color: AppTheme.primary,
+                          width: 1.2,
+                        ),
+                      ),
+                    ),
+                    icon: const Icon(Icons.shopping_cart_checkout, size: 16),
+                    label: Text(
+                      _trOrLocale(
+                        context,
+                        l10n,
+                        'convertToOrder',
+                        en: 'Convert to order',
+                        he: 'המר להזמנה',
+                        ar: 'تحويل إلى طلب',
+                      ),
+                      style: GoogleFonts.assistant(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = _trOrLocale(
+      context,
+      l10n,
+      'quoteHistory',
+      en: 'Quotes',
+      he: 'הצעות מחיר',
+      ar: 'عروض الأسعار',
+    );
+
+    return widget.quotesAsync.when(
+      data: (quotes) {
+        final canToggle = quotes.length > _collapsedCount;
+        final visible = (!_expanded && canToggle)
+            ? quotes.take(_collapsedCount).toList()
+            : quotes;
+
+        return _SidebarCard(
+          title: title,
+          icon: Icons.request_quote_outlined,
+          expanded: canToggle ? _expanded : null,
+          onToggleExpanded:
+              canToggle ? () => setState(() => _expanded = !_expanded) : null,
+          titleBadge: quotes.isEmpty
+              ? null
+              : Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppTheme.secondary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: AppTheme.secondary.withValues(alpha: 0.28),
+                    ),
+                  ),
+                  child: Text(
+                    quotes.length.toString(),
+                    style: GoogleFonts.assistant(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.secondary,
+                    ),
+                  ),
+                ),
+          child: quotes.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    _trOrLocale(
+                      context,
+                      l10n,
+                      'noQuotesForCustomer',
+                      en: 'No quotes for this customer.',
+                      he: 'אין הצעות מחיר ללקוח זה.',
+                      ar: 'لا توجد عروض أسعار لهذا العميل.',
+                    ),
+                    textAlign: TextAlign.start,
+                    style: GoogleFonts.assistant(
+                      color: AppTheme.onSurfaceVariant,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: visible.length,
+                        separatorBuilder: (_, __) => Divider(
+                          height: 1,
+                          thickness: 1,
+                          color:
+                              AppTheme.outlineVariant.withValues(alpha: 0.12),
+                        ),
+                        itemBuilder: (context, index) {
+                          return _quoteRow(context, ref, visible[index]);
+                        },
+                      ),
+                    ),
+                    if (canToggle) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: TextButton.icon(
+                          onPressed: () =>
+                              setState(() => _expanded = !_expanded),
+                          icon: Icon(
+                            _expanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                            size: 20,
+                          ),
+                          label: Text(
+                            _expanded
+                                ? _trOrLocale(context, l10n, 'showLess',
+                                    en: 'Show less',
+                                    he: 'הצג פחות',
+                                    ar: 'عرض أقل')
+                                : _trOrLocale(context, l10n, 'showMore',
+                                    en:
+                                        'Show more (${quotes.length - _collapsedCount})',
+                                    he:
+                                        'הצג עוד (${quotes.length - _collapsedCount})',
+                                    ar:
+                                        'عرض المزيد (${quotes.length - _collapsedCount})'),
+                            style: GoogleFonts.assistant(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppTheme.secondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+        );
+      },
+      loading: () => _SidebarCard(
+        title: title,
+        icon: Icons.request_quote_outlined,
+        child: const Padding(
+          padding: EdgeInsets.symmetric(vertical: 24),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ),
+      error: (e, _) => _SidebarCard(
+        title: title,
+        icon: Icons.request_quote_outlined,
+        child: Text(
+          '${l10n?.tr('error') ?? 'Error'}: $e',
+          style: GoogleFonts.assistant(color: AppTheme.error),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Quote Form Screen ──────────────────────────────────────────────────────
+
+class _QuoteItemRow {
+  final nameKey = GlobalKey();
+  final itemNumberCtrl = TextEditingController();
+  final nameCtrl = TextEditingController();
+  final quantityCtrl = TextEditingController(text: '1');
+  String? inventoryItemId;
+  String? imageUrl;
+  final extrasCtrl = TextEditingController();
+  final priceCtrl = TextEditingController();
+  final extrasPriceCtrl = TextEditingController();
+
+  double get lineTotal {
+    final price = double.tryParse(priceCtrl.text) ?? 0;
+    final extras = double.tryParse(extrasPriceCtrl.text) ?? 0;
+    final qty = double.tryParse(quantityCtrl.text) ?? 1;
+    return (price + extras) * qty;
+  }
+}
+
+class _QuoteFormScreen extends ConsumerStatefulWidget {
+  final Customer customer;
+  const _QuoteFormScreen({required this.customer});
+
+  @override
+  ConsumerState<_QuoteFormScreen> createState() => _QuoteFormScreenState();
+}
+
+class _QuoteFormScreenState extends ConsumerState<_QuoteFormScreen> {
+  final List<_QuoteItemRow> _items = [];
+  final _notesController = TextEditingController();
+  OverlayEntry? _inventoryOverlayEntry;
+  bool _isSending = false;
+  bool _inStockOnly = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _items.add(_QuoteItemRow());
+  }
+
+  @override
+  void dispose() {
+    _hideInventoryDropdown();
+    _notesController.dispose();
+    for (final item in _items) {
+      item.itemNumberCtrl.dispose();
+      item.nameCtrl.dispose();
+      item.quantityCtrl.dispose();
+      item.extrasCtrl.dispose();
+      item.priceCtrl.dispose();
+      item.extrasPriceCtrl.dispose();
+    }
+    super.dispose();
+  }
+
+  void _hideInventoryDropdown() {
+    _inventoryOverlayEntry?.remove();
+    _inventoryOverlayEntry = null;
+  }
+
+  void _applyInventoryToQuoteRow(_QuoteItemRow row, InventoryItem it) {
+    row.inventoryItemId = it.id;
+    row.imageUrl = it.imageUrl;
+    row.nameCtrl.text = it.description;
+    row.itemNumberCtrl.text = it.barcode ?? '';
+    row.priceCtrl.text = (it.consumerPrice ?? 0).toString();
+  }
+
+  void _showQuoteInventorySuggestions({
+    required BuildContext context,
+    required GlobalKey anchorKey,
+    required _QuoteItemRow row,
+    required List<InventoryItem> items,
+    required AppLocalizations? l10n,
+  }) {
+    final box = anchorKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final pos = box.localToGlobal(Offset.zero);
+    final size = box.size;
+    final overlay = Overlay.of(context);
+    final screenW = MediaQuery.sizeOf(context).width;
+    const screenMargin = 8.0;
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+
+    final query = row.nameCtrl.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      _hideInventoryDropdown();
+      return;
+    }
+
+    final filtered = items.where((it) {
+      if (_inStockOnly && it.availableStock <= 0) return false;
+      final desc = it.description.toLowerCase();
+      final brand = (it.brand ?? '').toLowerCase();
+      final barcode = (it.barcode ?? '').toLowerCase();
+      return desc.contains(query) ||
+          brand.contains(query) ||
+          barcode.contains(query);
+    }).take(12).toList();
+
+    _hideInventoryDropdown();
+    _inventoryOverlayEntry = OverlayEntry(
+      builder: (ctx) => Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _hideInventoryDropdown,
+            ),
+          ),
+          Positioned(
+            left: () {
+              final desiredW = (size.width + 220).clamp(360.0, 560.0);
+              final minLeft = screenMargin;
+              final maxLeft = (screenW - screenMargin - desiredW).clamp(
+                screenMargin,
+                double.infinity,
+              );
+              final rawLeft = isRtl ? (pos.dx + size.width - desiredW) : pos.dx;
+              return rawLeft.clamp(minLeft, maxLeft);
+            }(),
+            top: pos.dy + size.height + 4,
+            width: (size.width + 220).clamp(360.0, 560.0),
+            child: Material(
+              elevation: 10,
+              shadowColor: Colors.black.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(16),
+              color: AppTheme.surfaceContainerLowest,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 420),
+                child: filtered.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Text(
+                          l10n?.tr('noMatchingResults') ?? 'No matches',
+                          style: GoogleFonts.assistant(
+                            color: AppTheme.onSurfaceVariant,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      )
+                    : ListView.separated(
+                        padding: EdgeInsets.zero,
+                        shrinkWrap: true,
+                        itemCount: filtered.length,
+                        separatorBuilder: (_, __) => Divider(
+                          height: 1,
+                          thickness: 1,
+                          color:
+                              AppTheme.outlineVariant.withValues(alpha: 0.12),
+                        ),
+                        itemBuilder: (context, i) {
+                          final it = filtered[i];
+                          final subtitleParts = <String>[
+                            if ((it.brand ?? '').trim().isNotEmpty)
+                              it.brand!.trim(),
+                            if ((it.barcode ?? '').trim().isNotEmpty)
+                              it.barcode!.trim(),
+                            '${_trOrLocale(context, l10n, 'quoteSelectedStock', en: 'Available now:', he: 'זמין כעת:', ar: 'متوفر الآن:')} ${it.availableStock}',
+                          ];
+                          return InkWell(
+                            onTap: () {
+                              if (!mounted) return;
+                              setState(() => _applyInventoryToQuoteRow(row, it));
+                              _hideInventoryDropdown();
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 56,
+                                    height: 56,
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.surfaceContainerHighest,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: AppTheme.outlineVariant
+                                            .withValues(alpha: 0.18),
+                                      ),
+                                    ),
+                                    clipBehavior: Clip.antiAlias,
+                                    child: (it.imageUrl != null &&
+                                            it.imageUrl!.trim().isNotEmpty)
+                                        ? CachedNetworkImage(
+                                            imageUrl: it.imageUrl!,
+                                            fit: BoxFit.cover,
+                                          )
+                                        : Icon(
+                                            Icons.inventory_2_outlined,
+                                            size: 22,
+                                            color: AppTheme.outline
+                                                .withValues(alpha: 0.55),
+                                          ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          it.description,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: GoogleFonts.assistant(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w800,
+                                            color: AppTheme.onSurface,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          subtitleParts.join(' · '),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: GoogleFonts.assistant(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppTheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    it.consumerPrice == null
+                                        ? '—'
+                                        : '₪${it.consumerPrice!.toStringAsFixed(0)}',
+                                    style: GoogleFonts.assistant(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w900,
+                                      color: AppTheme.onSurface,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    overlay.insert(_inventoryOverlayEntry!);
+  }
+
+  Future<void> _pickQuoteItemFromInventory(
+    _QuoteItemRow row,
+    List<InventoryItem> items,
+    AppLocalizations? l10n,
+  ) async {
+    final pool =
+        _inStockOnly ? items.where((it) => it.availableStock > 0).toList() : items;
+    final selected = await showModalBottomSheet<InventoryItem>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: AppTheme.surfaceContainerLowest,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        final searchCtrl = TextEditingController(text: row.nameCtrl.text.trim());
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            final query = searchCtrl.text.trim().toLowerCase();
+            final filtered = pool.where((it) {
+              if (query.isEmpty) return true;
+              return it.description.toLowerCase().contains(query) ||
+                  (it.brand ?? '').toLowerCase().contains(query) ||
+                  (it.barcode ?? '').toLowerCase().contains(query);
+            }).toList();
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 18,
+                right: 18,
+                top: 18,
+                bottom: MediaQuery.viewInsetsOf(ctx).bottom + 18,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: searchCtrl,
+                    autofocus: true,
+                    onChanged: (_) => setLocal(() {}),
+                    decoration: _quoteFieldDecoration(
+                      hintText: _trOrLocale(
+                        ctx,
+                        l10n,
+                        'quoteItemSearchHint',
+                        en: 'Type product name, brand, or barcode',
+                        he: 'הקלד שם מוצר, מותג או ברקוד',
+                        ar: 'اكتب اسم المنتج أو العلامة أو الباركود',
+                      ),
+                      prefixIcon: const Icon(Icons.search_rounded),
+                      isDense: false,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Flexible(
+                    child: filtered.isEmpty
+                        ? Center(
+                            child: Text(
+                              l10n?.tr('noMatchingResults') ?? 'No matches',
+                              style: GoogleFonts.assistant(
+                                color: AppTheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          )
+                        : ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: filtered.length,
+                            separatorBuilder: (_, __) => Divider(
+                              height: 1,
+                              color: AppTheme.outlineVariant
+                                  .withValues(alpha: 0.14),
+                            ),
+                            itemBuilder: (ctx, i) {
+                              final it = filtered[i];
+                              return ListTile(
+                                contentPadding:
+                                    const EdgeInsets.symmetric(horizontal: 4),
+                                leading: SizedBox(
+                                  width: 44,
+                                  height: 44,
+                                  child: (it.imageUrl != null &&
+                                          it.imageUrl!.trim().isNotEmpty)
+                                      ? ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          child: CachedNetworkImage(
+                                            imageUrl: it.imageUrl!,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        )
+                                      : Container(
+                                          decoration: BoxDecoration(
+                                            color: AppTheme.surfaceContainerHighest,
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                          ),
+                                          child: const Icon(
+                                            Icons.inventory_2_outlined,
+                                            size: 20,
+                                          ),
+                                        ),
+                                ),
+                                title: Text(
+                                  it.description,
+                                  style: GoogleFonts.assistant(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  [
+                                    if ((it.brand ?? '').trim().isNotEmpty)
+                                      it.brand!.trim(),
+                                    if ((it.barcode ?? '').trim().isNotEmpty)
+                                      it.barcode!.trim(),
+                                    '${it.availableStock}',
+                                  ].join(' · '),
+                                  style: GoogleFonts.assistant(),
+                                ),
+                                trailing: Text(
+                                  it.consumerPrice == null
+                                      ? '—'
+                                      : '₪${it.consumerPrice!.toStringAsFixed(0)}',
+                                  style: GoogleFonts.assistant(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                onTap: () => Navigator.of(ctx).pop(it),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+    if (selected != null && mounted) {
+      setState(() => _applyInventoryToQuoteRow(row, selected));
+    }
+  }
+
+  double get _subtotal =>
+      _items.fold<double>(0, (s, i) => s + i.lineTotal);
+
+  double get _vat => _subtotal * 0.18;
+
+  double get _grandTotal => _subtotal + _vat;
+
+  Future<void> _sendQuote() async {
+    final emptyIdx = _items.indexWhere((i) =>
+        i.itemNumberCtrl.text.trim().isEmpty &&
+        i.nameCtrl.text.trim().isEmpty);
+    if (emptyIdx >= 0) {
+      final lang = Localizations.localeOf(context).languageCode;
+      final msg = switch (lang) {
+        'he' => 'שורה ${emptyIdx + 1}: חובה להזין קוד או שם לפחות',
+        'ar' => 'الصف ${emptyIdx + 1}: يجب إدخال رمز أو اسم على الأقل',
+        _ => 'Row ${emptyIdx + 1}: Code or name is required',
+      };
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(msg, style: GoogleFonts.assistant()),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+      return;
+    }
+
+    if (widget.customer.phones.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)?.tr('noPhone') ??
+                'No phone number available',
+            style: GoogleFonts.assistant(),
+          ),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSending = true);
+
+    try {
+      final username = ref.read(currentUsernameProvider);
+      final lang = Localizations.localeOf(context).languageCode;
+      final quoteItems = _items
+          .map((i) => QuoteItem(
+                itemNumber: i.itemNumberCtrl.text.trim(),
+                name: i.nameCtrl.text.trim(),
+                imageUrl: i.imageUrl,
+                quantity: double.tryParse(i.quantityCtrl.text) ?? 1,
+                extras: i.extrasCtrl.text.trim(),
+                price: double.tryParse(i.priceCtrl.text) ?? 0,
+                extrasPrice: double.tryParse(i.extrasPriceCtrl.text) ?? 0,
+              ))
+          .toList();
+
+      final quote = Quote(
+        id: '',
+        customerId: widget.customer.id,
+        totalPrice: _grandTotal,
+        notes: _notesController.text.trim().isEmpty
+            ? null
+            : _notesController.text.trim(),
+        createdBy: username,
+        updatedBy: username,
+      );
+
+      // Save quote + warm PDF fonts/logo at the same time.
+      final savedQuoteFuture =
+          ref.read(quoteServiceProvider).create(quote, quoteItems);
+      final warmFuture = QuotePdfService.warmUp(lang);
+      final savedQuote = await savedQuoteFuture;
+      await warmFuture;
+
+      final pdfBytes = await QuotePdfService.generate(
+        customer: widget.customer,
+        quote: savedQuote,
+        // Prefer local items so images are available even if DB column
+        // migration hasn't been applied yet on every environment.
+        items: quoteItems
+            .asMap()
+            .entries
+            .map((e) => e.value.copyWith(
+                  imageUrl: e.value.imageUrl ??
+                      (e.key < savedQuote.items.length
+                          ? savedQuote.items[e.key].imageUrl
+                          : null),
+                ))
+            .toList(),
+        languageCode: lang,
+      );
+
+      final pdfUrl = await ref
+          .read(quoteServiceProvider)
+          .uploadPdf(savedQuote.id, pdfBytes);
+      // Don't block WhatsApp on the pdf_url DB write.
+      final setPdfFuture =
+          ref.read(quoteServiceProvider).setPdfUrl(savedQuote.id, pdfUrl);
+
+      String phone =
+          widget.customer.phones.first.replaceAll(RegExp(r'\D'), '');
+      if (phone.startsWith('0')) {
+        phone = '972${phone.substring(1)}';
+      } else if (!phone.startsWith('972')) {
+        phone = '972$phone';
+      }
+
+      final customerDisplayName =
+          widget.customer.customerName.trim().isNotEmpty
+              ? widget.customer.customerName
+              : widget.customer.cardName;
+
+      final caption = switch (lang) {
+        'he' =>
+          'שלום $customerDisplayName,\nמצורפת הצעת מחיר מ-Royal Lights.\nנשמח לעמוד לשירותכם!',
+        'ar' =>
+          'مرحبًا $customerDisplayName،\nمرفق عرض سعر من Royal Lights.\nنتطلع لخدمتكم!',
+        _ =>
+          'Hello $customerDisplayName,\nPlease find attached a price quote from Royal Lights.\nWe look forward to serving you!',
+      };
+
+      await Future.wait([
+        WhatsAppService.sendDocument(phone, pdfUrl, caption),
+        setPdfFuture,
+      ]);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _trOrLocale(context, AppLocalizations.of(context), 'quoteSent',
+                en: 'Quote sent',
+                he: 'הצעת המחיר נשלחה',
+                ar: 'تم إرسال عرض السعر'),
+            style: GoogleFonts.assistant(),
+          ),
+          backgroundColor: AppTheme.success,
+        ),
+      );
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e', style: GoogleFonts.assistant()),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final money = NumberFormat('#,##0.00', 'en_US');
+    final inventoryAsync = ref.watch(inventoryItemsProvider);
+    // Riverpod 3.x doesn't expose `valueOrNull`; use `asData` for a safe read.
+    final inventoryItems =
+        inventoryAsync.asData?.value ?? const <InventoryItem>[];
+    final visibleInventory = _inStockOnly
+        ? inventoryItems.where((it) => it.availableStock > 0).toList()
+        : inventoryItems;
+    final inventoryById = {
+      for (final it in inventoryItems) it.id: it,
+    };
+
+    return Scaffold(
+      backgroundColor: AppTheme.surfaceContainerLowest,
+      appBar: AppBar(
+        backgroundColor: AppTheme.surfaceContainerLowest,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          _trOrLocale(context, l10n, 'quoteFormTitle',
+              en: 'New price quote',
+              he: 'הצעת מחיר חדשה',
+              ar: 'عرض سعر جديد'),
+          style: GoogleFonts.assistant(
+            fontWeight: FontWeight.w800,
+            fontSize: 20,
+            color: AppTheme.onSurface,
+          ),
+        ),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Customer info
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surfaceContainerHighest
+                          .withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color:
+                            AppTheme.outlineVariant.withValues(alpha: 0.2),
+                      ),
+                    ),
+                    child: Text(
+                      '${widget.customer.cardName} — ${widget.customer.customerName}',
+                      style: GoogleFonts.assistant(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.onSurface,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // In-stock toggle
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _trOrLocale(
+                            context,
+                            l10n,
+                            'quoteInStockOnlyLabel',
+                            en: 'Show in-stock items only',
+                            he: 'הצג רק פריטים במלאי',
+                            ar: 'عرض العناصر المتوفرة فقط',
+                          ),
+                          style: GoogleFonts.assistant(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      Switch(
+                        value: _inStockOnly,
+                        onChanged: inventoryItems.isEmpty
+                            ? null
+                            : (v) => setState(() => _inStockOnly = v),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Items
+                  ...List.generate(_items.length, (index) {
+                    final item = _items[index];
+                    final selectedInv =
+                        item.inventoryItemId != null ? inventoryById[item.inventoryItemId] : null;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: AppTheme.surfaceContainerLowest,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: AppTheme.outlineVariant
+                                .withValues(alpha: 0.25),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(
+                                  '${_trOrLocale(context, l10n, 'quoteItem', en: 'Item', he: 'פריט', ar: 'صنف')} ${index + 1}',
+                                  style: GoogleFonts.assistant(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w800,
+                                    color: AppTheme.onSurface,
+                                  ),
+                                ),
+                                const Spacer(),
+                                if (_items.length > 1)
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline,
+                                        size: 20, color: AppTheme.error),
+                                    onPressed: () =>
+                                        setState(() => _items.removeAt(index)),
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+
+                            if (selectedInv != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Text(
+                                  _trOrLocale(
+                                    context,
+                                    l10n,
+                                    'quoteSelectedStock',
+                                    en: 'Available now:',
+                                    he: 'זמין כעת:',
+                                    ar: 'متوفر الآن:',
+                                  ) +
+                                      ' ${selectedInv.availableStock}',
+                                  style: GoogleFonts.assistant(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppTheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          key: item.nameKey,
+                                          controller: item.nameCtrl,
+                                          onChanged: (_) {
+                                            if (item.inventoryItemId != null) {
+                                              setState(() {
+                                                item.inventoryItemId = null;
+                                                item.imageUrl = null;
+                                                item.itemNumberCtrl.clear();
+                                              });
+                                            } else {
+                                              setState(() {});
+                                            }
+                                            _showQuoteInventorySuggestions(
+                                              context: context,
+                                              anchorKey: item.nameKey,
+                                              row: item,
+                                              items: visibleInventory,
+                                              l10n: l10n,
+                                            );
+                                          },
+                                          onTap: () {
+                                            if (item.nameCtrl.text.trim().isNotEmpty) {
+                                              _showQuoteInventorySuggestions(
+                                                context: context,
+                                                anchorKey: item.nameKey,
+                                                row: item,
+                                                items: visibleInventory,
+                                                l10n: l10n,
+                                              );
+                                            }
+                                          },
+                                          decoration: _quoteFieldDecoration(
+                                            labelText: _trOrLocale(
+                                              context,
+                                              l10n,
+                                              'quoteProductNameLabel',
+                                              en: 'Product name',
+                                              he: 'שם המוצר',
+                                              ar: 'اسم المنتج',
+                                            ),
+                                            hintText: _trOrLocale(
+                                              context,
+                                              l10n,
+                                              'quoteItemSearchHintShort',
+                                              en: 'Type to search stock',
+                                              he: 'הקלד לחיפוש במלאי',
+                                              ar: 'اكتب للبحث في المخزون',
+                                            ),
+                                          ),
+                                          style: GoogleFonts.assistant(fontSize: 14),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      IconButton(
+                                        tooltip: _trOrLocale(
+                                          context,
+                                          l10n,
+                                          'quoteItemFromStockLabel',
+                                          en: 'Stock item',
+                                          he: 'פריט מהמלאי',
+                                          ar: 'عنصر من المخزون',
+                                        ),
+                                        onPressed: inventoryItems.isEmpty
+                                            ? null
+                                            : () => _pickQuoteItemFromInventory(
+                                                  item,
+                                                  inventoryItems,
+                                                  l10n,
+                                                ),
+                                        icon: const Icon(
+                                          Icons.inventory_2_outlined,
+                                          size: 20,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: TextField(
+                                    controller: item.itemNumberCtrl,
+                                    decoration: _quoteFieldDecoration(
+                                      labelText: _trOrLocale(
+                                        context,
+                                        l10n,
+                                        'quoteProductCodeLabel',
+                                        en: 'Code',
+                                        he: 'מק״ט',
+                                        ar: 'الرمز',
+                                      ),
+                                    ),
+                                    style: GoogleFonts.assistant(fontSize: 14),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: item.quantityCtrl,
+                                    onChanged: (_) => setState(() {}),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    decoration: _quoteFieldDecoration(
+                                      labelText: _trOrLocale(
+                                        context,
+                                        l10n,
+                                        'quoteQtyLabel',
+                                        en: 'Qty',
+                                        he: 'כמות',
+                                        ar: 'الكمية',
+                                      ),
+                                    ),
+                                    style: GoogleFonts.assistant(fontSize: 14),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: TextField(
+                                    controller: item.priceCtrl,
+                                    onChanged: (_) => setState(() {}),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    decoration: _quoteFieldDecoration(
+                                      labelText: _trOrLocale(
+                                        context,
+                                        l10n,
+                                        'quotePriceLabel',
+                                        en: 'Price',
+                                        he: 'מחיר',
+                                        ar: 'السعر',
+                                      ),
+                                      prefixText: '₪ ',
+                                    ),
+                                    style: GoogleFonts.assistant(fontSize: 14),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: TextField(
+                                    controller: item.extrasPriceCtrl,
+                                    onChanged: (_) => setState(() {}),
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    decoration: _quoteFieldDecoration(
+                                      labelText: _trOrLocale(
+                                        context,
+                                        l10n,
+                                        'quoteExtrasPriceLabel',
+                                        en: 'Extras price',
+                                        he: 'מחיר תוספת',
+                                        ar: 'سعر الإضافة',
+                                      ),
+                                      prefixText: '₪ ',
+                                    ),
+                                    style: GoogleFonts.assistant(fontSize: 14),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                SizedBox(
+                                  width: 80,
+                                  child: Text(
+                                    '₪${item.lineTotal.toStringAsFixed(0)}',
+                                    textAlign: TextAlign.end,
+                                    style: GoogleFonts.assistant(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppTheme.onSurface,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: item.extrasCtrl,
+                              onChanged: (_) => setState(() {}),
+                              decoration: _quoteFieldDecoration(
+                                labelText: _trOrLocale(
+                                  context,
+                                  l10n,
+                                  'quoteExtrasDescriptionLabel',
+                                  en: 'Extras (description)',
+                                  he: 'תוספת (תיאור)',
+                                  ar: 'إضافات (وصف)',
+                                ),
+                              ),
+                              style: GoogleFonts.assistant(fontSize: 14),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+
+                  // Add item button
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: () =>
+                          setState(() => _items.add(_QuoteItemRow())),
+                      icon: const Icon(Icons.add_rounded, size: 18),
+                      label: Text(
+                        _trOrLocale(context, l10n, 'addItem',
+                            en: 'Add item',
+                            he: 'הוסף פריט',
+                            ar: 'إضافة صنف'),
+                        style: GoogleFonts.assistant(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Notes
+                  TextField(
+                    controller: _notesController,
+                    maxLines: 3,
+                    decoration: _quoteFieldDecoration(
+                      labelText: _trOrLocale(context, l10n, 'quoteNotes',
+                          en: 'Notes', he: 'הערות', ar: 'ملاحظات'),
+                      isDense: false,
+                    ),
+                    style: GoogleFonts.assistant(fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Bottom totals + send button
+          Container(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceContainerLowest,
+              border: Border(
+                top: BorderSide(
+                  color: AppTheme.outlineVariant.withValues(alpha: 0.2),
+                ),
+              ),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      _trOrLocale(context, l10n, 'subtotal',
+                          en: 'Subtotal', he: 'סכום ביניים', ar: 'المجموع الفرعي'),
+                      style: GoogleFonts.assistant(
+                          fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      '₪${money.format(_subtotal)}',
+                      style: GoogleFonts.assistant(
+                          fontSize: 14, fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      _trOrLocale(context, l10n, 'vat',
+                          en: 'VAT 18%', he: 'מע״מ 18%', ar: 'ض.ق.م 18٪'),
+                      style: GoogleFonts.assistant(
+                          fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      '₪${money.format(_vat)}',
+                      style: GoogleFonts.assistant(
+                          fontSize: 14, fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+                const Divider(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      _trOrLocale(context, l10n, 'total',
+                          en: 'Total', he: 'סה״כ', ar: 'المجموع'),
+                      style: GoogleFonts.assistant(
+                          fontSize: 16, fontWeight: FontWeight.w800),
+                    ),
+                    Text(
+                      '₪${money.format(_grandTotal)}',
+                      style: GoogleFonts.assistant(
+                          fontSize: 16, fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: FilledButton.icon(
+                    onPressed: _isSending ? null : _sendQuote,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppTheme.success,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    icon: _isSending
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.send_rounded, size: 20),
+                    label: Text(
+                      _trOrLocale(context, l10n, 'sendQuoteViaWhatsApp',
+                          en: 'Send via WhatsApp',
+                          he: 'שלח בוואטסאפ',
+                          ar: 'إرسال عبر واتساب'),
+                      style: GoogleFonts.assistant(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
