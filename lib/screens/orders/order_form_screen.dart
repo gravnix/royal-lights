@@ -31,6 +31,9 @@ class OrderFormScreen extends ConsumerStatefulWidget {
   /// Pre-fills items from an accepted quote (quote → order conversion).
   final List<QuoteItem>? initialQuoteItems;
 
+  /// When converting a quote, link the saved order back to this quote id.
+  final String? sourceQuoteId;
+
   /// Opens the bottom notes/totals drawer after load (e.g. Orders list "Send to supplier").
   final bool openBottomDrawerInitially;
   const OrderFormScreen({
@@ -38,6 +41,7 @@ class OrderFormScreen extends ConsumerStatefulWidget {
     this.orderId,
     this.initialCustomer,
     this.initialQuoteItems,
+    this.sourceQuoteId,
     this.openBottomDrawerInitially = false,
   });
 
@@ -3918,6 +3922,17 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
         _existingOrder =
             await ref.read(orderServiceProvider).create(order, orderItems);
         _isEdit = true;
+
+        final sourceQuoteId = widget.sourceQuoteId?.trim();
+        if (sourceQuoteId != null && sourceQuoteId.isNotEmpty) {
+          await ref.read(quoteServiceProvider).setConvertedOrderId(
+                sourceQuoteId,
+                _existingOrder!.id,
+                username,
+              );
+          ref.invalidate(quotesProvider);
+          ref.invalidate(customerQuotesProvider(_selectedCustomer!.id));
+        }
       }
 
       _syncItemRowIdsAndFlagsFromOrder(_existingOrder!);

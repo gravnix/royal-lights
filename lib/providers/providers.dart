@@ -212,6 +212,20 @@ final customerQuotesProvider = FutureProvider.family
       }
     });
 
+final quotesProvider = FutureProvider.autoDispose<List<Quote>>((ref) async {
+  try {
+    return await ref.watch(quoteServiceProvider).getAll();
+  } catch (e) {
+    final msg = e.toString();
+    if (msg.contains('PGRST205') ||
+        (msg.contains('quotes') && msg.contains('schema cache')) ||
+        msg.contains('Could not find the table')) {
+      return <Quote>[];
+    }
+    rethrow;
+  }
+});
+
 // Customer payments
 final customerPaymentsProvider = FutureProvider.family
     .autoDispose<List<Payment>, String>((ref, customerId) async {

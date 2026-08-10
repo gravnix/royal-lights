@@ -1,13 +1,9 @@
-import 'dart:typed_data';
-
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart' show DateFormat, NumberFormat;
-import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/app_date_format.dart';
@@ -23,6 +19,7 @@ import '../../models/quote_item.dart';
 import '../../providers/providers.dart';
 import '../../services/quote_pdf_service.dart';
 import '../../services/whatsapp_service.dart';
+import '../../widgets/quote_pdf_preview_dialog.dart';
 import '../../theme/order_status_colors.dart';
 import '../orders/order_form_screen.dart';
 import '../payments/payments_screen.dart';
@@ -2569,319 +2566,67 @@ class _QuotesListSectionState extends ConsumerState<_QuotesListSection> {
   }
 
   Future<void> _viewQuote(BuildContext context, Quote quote) async {
-    final url = quote.pdfUrl?.trim() ?? '';
-    if (url.isEmpty) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _trOrLocale(context, l10n, 'quotePdfMissing',
-                en: 'Quote PDF is not available.',
-                he: 'קובץ הצעת המחיר אינו זמין.',
-                ar: 'ملف عرض السعر غير متوفر.'),
-            style: GoogleFonts.assistant(),
-          ),
-          backgroundColor: AppTheme.error,
-        ),
-      );
-      return;
-    }
-
-    final title = _trOrLocale(
-      context,
-      l10n,
-      'viewQuoteTitle',
-      en: 'Quote #${quote.quoteNumber ?? ''}',
-      he: 'הצעה מס׳ ${quote.quoteNumber ?? ''}',
-      ar: 'عرض رقم ${quote.quoteNumber ?? ''}',
-    );
-    final pdfFileName = 'quote_${quote.quoteNumber ?? quote.id}.pdf';
-
-    // Prefetch so print/share/preview share one download.
-    Uint8List? pdfBytes;
-    try {
-      final response = await http.get(Uri.parse(url));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception('HTTP ${response.statusCode}');
-      }
-      pdfBytes = response.bodyBytes;
-    } catch (_) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _trOrLocale(context, l10n, 'quotePdfLoadError',
-                en: 'Could not load the quote PDF.',
-                he: 'לא ניתן לטעון את קובץ ההצעה.',
-                ar: 'تعذر تحميل ملف العرض.'),
-            style: GoogleFonts.assistant(),
-          ),
-          backgroundColor: AppTheme.error,
-        ),
-      );
-      return;
-    }
-    if (!context.mounted) return;
-    final bytes = pdfBytes;
-
-    Widget roundAction({
-      required IconData icon,
-      required String label,
-      required VoidCallback onPressed,
-      bool primary = false,
-    }) {
-      final radius = BorderRadius.circular(12);
-      if (primary) {
-        return FilledButton.icon(
-          onPressed: onPressed,
-          icon: Icon(icon, size: 18),
-          label: Text(
-            label,
-            style: GoogleFonts.assistant(fontWeight: FontWeight.w700),
-          ),
-          style: FilledButton.styleFrom(
-            backgroundColor: AppTheme.primary,
-            foregroundColor: AppTheme.onPrimary,
-            elevation: 0,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: radius),
-          ),
-        );
-      }
-      return OutlinedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon, size: 18),
-        label: Text(
-          label,
-          style: GoogleFonts.assistant(fontWeight: FontWeight.w700),
-        ),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: AppTheme.primary,
-          backgroundColor: AppTheme.surfaceContainerLowest,
-          elevation: 0,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          side: const BorderSide(color: AppTheme.primary, width: 1.2),
-          shape: RoundedRectangleBorder(borderRadius: radius),
-        ),
-      );
-    }
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      barrierColor: Colors.black.withValues(alpha: 0.45),
-      builder: (ctx) {
-        return Dialog(
-          insetPadding:
-              const EdgeInsets.symmetric(horizontal: 28, vertical: 28),
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          child: Container(
-            width: 760,
-            height: MediaQuery.sizeOf(ctx).height * 0.88,
-            decoration: BoxDecoration(
-              color: AppTheme.surfaceContainerLowest,
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: AppTheme.outlineVariant.withValues(alpha: 0.25),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.14),
-                  blurRadius: 32,
-                  offset: const Offset(0, 16),
-                ),
-              ],
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                // Header — matches app card language.
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 18, 12, 14),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppTheme.secondary.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(
-                          Icons.request_quote_outlined,
-                          color: AppTheme.secondary,
-                          size: 22,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              title,
-                              style: GoogleFonts.assistant(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 18,
-                                color: AppTheme.onSurface,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Align(
-                              alignment: AlignmentDirectional.centerStart,
-                              child: Container(
-                                height: 3,
-                                width: 40,
-                                decoration: BoxDecoration(
-                                  color: AppTheme.secondary,
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Material(
-                        color: AppTheme.surfaceContainerHighest
-                            .withValues(alpha: 0.65),
-                        borderRadius: BorderRadius.circular(12),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () => Navigator.of(ctx).pop(),
-                          child: const SizedBox(
-                            width: 40,
-                            height: 40,
-                            child: Icon(
-                              Icons.close_rounded,
-                              color: AppTheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Divider(
-                  height: 1,
-                  color: AppTheme.outlineVariant.withValues(alpha: 0.25),
-                ),
-                // Preview — no built-in black action bar.
-                Expanded(
-                  child: ColoredBox(
-                    color: AppTheme.surfaceContainerLow,
-                    child: PdfPreview(
-                      build: (format) async => bytes,
-                      allowPrinting: false,
-                      allowSharing: false,
-                      canChangeOrientation: false,
-                      canChangePageFormat: false,
-                      canDebug: false,
-                      useActions: false,
-                      pdfFileName: pdfFileName,
-                      previewPageMargin: const EdgeInsets.all(18),
-                      padding: const EdgeInsets.all(12),
-                    ),
-                  ),
-                ),
-                Divider(
-                  height: 1,
-                  color: AppTheme.outlineVariant.withValues(alpha: 0.25),
-                ),
-                // Rounded action buttons matching the app.
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-                  child: Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    alignment: WrapAlignment.end,
-                    children: [
-                      roundAction(
-                        icon: Icons.open_in_new_rounded,
-                        label: _trOrLocale(context, l10n, 'openInBrowser',
-                            en: 'Open', he: 'פתח', ar: 'فتح'),
-                        onPressed: () async {
-                          await launchUrl(
-                            Uri.parse(url),
-                            mode: LaunchMode.externalApplication,
-                          );
-                        },
-                      ),
-                      roundAction(
-                        icon: Icons.download_rounded,
-                        label: _trOrLocale(context, l10n, 'download',
-                            en: 'Download', he: 'הורדה', ar: 'تنزيل'),
-                        onPressed: () async {
-                          await Printing.sharePdf(
-                            bytes: bytes,
-                            filename: pdfFileName,
-                          );
-                        },
-                      ),
-                      roundAction(
-                        icon: Icons.print_rounded,
-                        label: _trOrLocale(context, l10n, 'print',
-                            en: 'Print', he: 'הדפס', ar: 'طباعة'),
-                        onPressed: () async {
-                          await Printing.layoutPdf(
-                            onLayout: (format) async => bytes,
-                            name: pdfFileName,
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
+    await showQuotePdfPreview(context, quote: quote, l10n: l10n);
   }
 
   Future<void> _convertToOrder(
       BuildContext context, WidgetRef ref, Quote quote) async {
-    final fullQuote = await ref.read(quoteServiceProvider).getById(quote.id);
+    final fullQuote =
+        await ref.read(quoteServiceProvider).getById(quote.id);
     if (!context.mounted) return;
 
-    final username = ref.read(currentUsernameProvider);
     final customers = ref.read(customersProvider).value;
     final cust =
         customers?.where((c) => c.id == fullQuote.customerId).firstOrNull;
-
-    await ref
-        .read(quoteServiceProvider)
-        .updateStatus(quote.id, 'Converted', username);
-
-    if (!context.mounted) return;
 
     final result = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => OrderFormScreen(
           initialCustomer: cust,
           initialQuoteItems: fullQuote.items,
+          sourceQuoteId: fullQuote.id,
         ),
       ),
     );
 
     if (context.mounted) {
       ref.invalidate(customerQuotesProvider(customer.id));
+      ref.invalidate(quotesProvider);
       ref.invalidate(ordersProvider);
       ref.invalidate(customerOrdersProvider(customer.id));
 
-      if (result == true) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _trOrLocale(context, l10n, 'quoteConverted',
-                  en: 'Quote converted to order',
-                  he: 'הצעת המחיר הומרה להזמנה',
-                  ar: 'تم تحويل العرض إلى طلب'),
-              style: GoogleFonts.assistant(),
+      try {
+        final updated =
+            await ref.read(quoteServiceProvider).getById(quote.id);
+        if (updated.status == QuoteStatus.converted && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _trOrLocale(context, l10n, 'quoteConverted',
+                    en: 'Quote converted to order',
+                    he: 'הצעת המחיר הומרה להזמנה',
+                    ar: 'تم تحويل العرض إلى طلب'),
+                style: GoogleFonts.assistant(),
+              ),
+              backgroundColor: AppTheme.success,
             ),
-            backgroundColor: AppTheme.success,
-          ),
-        );
+          );
+        }
+      } catch (_) {
+        if (result == true && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _trOrLocale(context, l10n, 'quoteConverted',
+                    en: 'Quote converted to order',
+                    he: 'הצעת המחיר הומרה להזמנה',
+                    ar: 'تم تحويل العرض إلى طلب'),
+                style: GoogleFonts.assistant(),
+              ),
+              backgroundColor: AppTheme.success,
+            ),
+          );
+        }
       }
     }
   }

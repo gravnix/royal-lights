@@ -20,6 +20,14 @@ class QuoteService {
     return (data as List).map((e) => Quote.fromJson(e)).toList();
   }
 
+  Future<List<Quote>> getAll() async {
+    final data = await _client
+        .from('quotes')
+        .select(_select)
+        .order('created_at', ascending: false);
+    return (data as List).map((e) => Quote.fromJson(e)).toList();
+  }
+
   Future<Quote> getById(String id) async {
     final data = await _client
         .from('quotes')
