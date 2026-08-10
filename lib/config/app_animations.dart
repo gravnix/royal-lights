@@ -108,17 +108,200 @@ class _AnimatedFadeInState extends State<AnimatedFadeIn>
   }
 }
 
+/// Replays a fade + soft rise whenever [active] becomes true.
+/// Use for tab panes / lists that stay mounted across switches.
+class AppearOnActivate extends StatefulWidget {
+  const AppearOnActivate({
+    super.key,
+    required this.active,
+    required this.child,
+    this.delay = Duration.zero,
+    this.duration = AppAnimations.durationNormal,
+    this.curve = AppAnimations.curveDefault,
+    this.slideDy = 16,
+    this.scaleBegin = 0.985,
+  });
+
+  final bool active;
+  final Widget child;
+  final Duration delay;
+  final Duration duration;
+  final Curve curve;
+  final double slideDy;
+  final double scaleBegin;
+
+  @override
+  State<AppearOnActivate> createState() => _AppearOnActivateState();
+}
+
+class _AppearOnActivateState extends State<AppearOnActivate>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late Animation<double> _opacity;
+  late Animation<Offset> _offset;
+  late Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: widget.duration);
+    _bindTweens();
+    if (widget.active) {
+      _play();
+    } else {
+      _controller.value = 0;
+    }
+  }
+
+  void _bindTweens() {
+    final curved = CurvedAnimation(parent: _controller, curve: widget.curve);
+    _opacity = curved;
+    _offset = Tween<Offset>(
+      begin: Offset(0, widget.slideDy),
+      end: Offset.zero,
+    ).animate(curved);
+    _scale = Tween<double>(
+      begin: widget.scaleBegin,
+      end: 1,
+    ).animate(curved);
+  }
+
+  Future<void> _play() async {
+    if (widget.delay > Duration.zero) {
+      await Future<void>.delayed(widget.delay);
+      if (!mounted || !widget.active) return;
+    }
+    _controller.forward(from: 0);
+  }
+
+  @override
+  void didUpdateWidget(covariant AppearOnActivate oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.duration != oldWidget.duration) {
+      _controller.duration = widget.duration;
+    }
+    if (widget.curve != oldWidget.curve ||
+        widget.slideDy != oldWidget.slideDy ||
+        widget.scaleBegin != oldWidget.scaleBegin) {
+      _bindTweens();
+    }
+    if (widget.active && !oldWidget.active) {
+      _play();
+    } else if (!widget.active && oldWidget.active) {
+      _controller.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _opacity.value.clamp(0.0, 1.0),
+          child: Transform.translate(
+            offset: _offset.value,
+            child: Transform.scale(
+              scale: _scale.value,
+              alignment: Alignment.topCenter,
+              child: child,
+            ),
+          ),
+        );
+      },
+      child: widget.child,
+    );
+  }
+}
+
+/// Cross-fade + soft slide/scale for kept-alive panes (nav pages, tab bodies).
+/// Inactive children stay mounted so scroll/filter state survives.
+class AnimatedVisibilityPane extends StatelessWidget {
+  const AnimatedVisibilityPane({
+    super.key,
+    required this.active,
+    required this.child,
+    this.slideDx = 0,
+    this.slideDy = 0.014,
+    this.duration = AppAnimations.durationNormal,
+    this.appearContent = true,
+    this.appearDelay = const Duration(milliseconds: 40),
+    this.appearSlideDy = 16,
+  });
+
+  final bool active;
+  final Widget child;
+  final double slideDx;
+  final double slideDy;
+  final Duration duration;
+  final bool appearContent;
+  final Duration appearDelay;
+  final double appearSlideDy;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = appearContent
+        ? AppearOnActivate(
+            active: active,
+            delay: appearDelay,
+            slideDy: appearSlideDy,
+            scaleBegin: 0.988,
+            child: child,
+          )
+        : child;
+
+    return IgnorePointer(
+      ignoring: !active,
+      child: ExcludeSemantics(
+        excluding: !active,
+        child: AnimatedOpacity(
+          opacity: active ? 1 : 0,
+          duration: duration,
+          curve: active
+              ? AppAnimations.curveDefault
+              : AppAnimations.curveGentle,
+          child: AnimatedSlide(
+            offset: active ? Offset.zero : Offset(slideDx, slideDy),
+            duration: duration,
+            curve: active
+                ? AppAnimations.curveDefault
+                : AppAnimations.curveGentle,
+            child: AnimatedScale(
+              scale: active ? 1 : 0.985,
+              duration: duration,
+              curve: AppAnimations.curveGentle,
+              alignment: Alignment.topCenter,
+              child: TickerMode(
+                enabled: active,
+                child: content,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Wraps a list/grid child with a staggered fade-in (use index for delay).
 class StaggeredFadeIn extends StatefulWidget {
   final Widget child;
   final int index;
   final int stepMilliseconds;
+  final double slideDy;
 
   const StaggeredFadeIn({
     super.key,
     required this.child,
     this.index = 0,
-    this.stepMilliseconds = 55,
+    this.stepMilliseconds = 45,
+    this.slideDy = 10,
   });
 
   @override
@@ -129,19 +312,26 @@ class _StaggeredFadeInState extends State<StaggeredFadeIn>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _opacity;
+  late Animation<Offset> _offset;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: AppAnimations.durationMedium,
+      duration: AppAnimations.durationNormal,
     );
-    _opacity = CurvedAnimation(
+    final curved = CurvedAnimation(
       parent: _controller,
       curve: AppAnimations.curveDefault,
     );
-    final delay = Duration(milliseconds: widget.index * widget.stepMilliseconds);
+    _opacity = curved;
+    _offset = Tween<Offset>(
+      begin: Offset(0, widget.slideDy),
+      end: Offset.zero,
+    ).animate(curved);
+    final delay =
+        Duration(milliseconds: widget.index * widget.stepMilliseconds);
     if (delay == Duration.zero) {
       _controller.forward();
     } else {
@@ -159,8 +349,17 @@ class _StaggeredFadeInState extends State<StaggeredFadeIn>
 
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _opacity,
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _opacity.value,
+          child: Transform.translate(
+            offset: _offset.value,
+            child: child,
+          ),
+        );
+      },
       child: widget.child,
     );
   }

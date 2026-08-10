@@ -17,6 +17,24 @@ import '../../widgets/app_round_checkbox.dart';
 import '../../widgets/confirm_send_customer_wa.dart';
 import '../../widgets/editorial_screen_title.dart';
 import 'order_form_screen.dart';
+import 'quotes_list_tab.dart';
+
+/// Soft fade + rise for Orders/Quotes list sections on tab switch.
+Widget _listAppear({
+  required bool active,
+  required Widget child,
+  Duration delay = Duration.zero,
+  double slideDy = 14,
+}) {
+  return AppearOnActivate(
+    active: active,
+    delay: delay,
+    duration: AppAnimations.durationNormal,
+    slideDy: slideDy,
+    scaleBegin: 0.988,
+    child: child,
+  );
+}
 
 class _WorkflowActionDef {
   const _WorkflowActionDef({
@@ -35,7 +53,8 @@ class OrdersScreen extends ConsumerStatefulWidget {
   ConsumerState<OrdersScreen> createState() => _OrdersScreenState();
 }
 
-class _OrdersScreenState extends ConsumerState<OrdersScreen> {
+class _OrdersScreenState extends ConsumerState<OrdersScreen>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _searchCtrl = TextEditingController();
   String _statusFilter = 'All';
   String _createdByFilter = 'All';
@@ -43,10 +62,36 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   bool _sortAscending = false;
   String? _updatingOrderId;
   int _currentPage = 1;
-  final int _rowsPerPage = 15;
+  int _rowsPerPage = 15;
+  static const _rowsPerPageOptions = [10, 15, 25, 50];
+  late final TabController _tabController;
+  int _selectedTab = 0;
+  int _ordersAppearGen = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(
+      length: 2,
+      vsync: this,
+      animationDuration: const Duration(milliseconds: 180),
+    );
+    _tabController.addListener(() {
+      if (!mounted) return;
+      // Rebuild only when the selected index changes — not on every
+      // animation tick (that was making Orders↔Quotes feel laggy).
+      if (_tabController.index != _selectedTab) {
+        setState(() {
+          _selectedTab = _tabController.index;
+          if (_selectedTab == 0) _ordersAppearGen++;
+        });
+      }
+    });
+  }
 
   @override
   void dispose() {
+    _tabController.dispose();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -384,28 +429,138 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         elevation: 0,
         toolbarHeight: 0, // Hide standard appbar to use custom header
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppTheme.secondary,
-        foregroundColor: AppTheme.onPrimary,
-        elevation: 2,
-        onPressed: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const OrderFormScreen()),
-          );
-        },
-        tooltip: l10n?.tr('newOrder') ?? 'New Order',
-        child: const Icon(Icons.add_rounded, size: 28),
-      ),
+      floatingActionButton: _selectedTab == 0
+          ? Padding(
+              // Keep clear of the bottom pagination / page switcher.
+              padding: const EdgeInsets.only(bottom: 64),
+              child: FloatingActionButton(
+                backgroundColor: AppTheme.secondary,
+                foregroundColor: AppTheme.onPrimary,
+                elevation: 2,
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const OrderFormScreen()),
+                  );
+                },
+                tooltip: l10n?.tr('newOrder') ?? 'New Order',
+                child: const Icon(Icons.add_rounded, size: 28),
+              ),
+            )
+          : null,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           EditorialScreenTitle(
             title: l10n?.tr('orders') ?? 'Orders',
+            padding: const EdgeInsets.only(
+              left: 32,
+              right: 32,
+              top: 20,
+              bottom: 12,
+            ),
+            trailing: Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: IntrinsicWidth(
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceContainer.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: AppTheme.outlineVariant.withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: TabBar(
+                    controller: _tabController,
+                    isScrollable: true,
+                    tabAlignment: TabAlignment.start,
+                    dividerColor: Colors.transparent,
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    overlayColor:
+                        const WidgetStatePropertyAll(Colors.transparent),
+                    indicator: BoxDecoration(
+                      color: AppTheme.surfaceContainerLowest,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: AppTheme.secondary.withValues(alpha: 0.45),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.04),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    labelColor: AppTheme.onSurface,
+                    unselectedLabelColor: AppTheme.onSurfaceVariant,
+                    labelStyle: GoogleFonts.assistant(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                    ),
+                    unselectedLabelStyle: GoogleFonts.assistant(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                    tabs: [
+                      Tab(
+                        height: 40,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.receipt_long_rounded, size: 18),
+                              const SizedBox(width: 8),
+                              Text(l10n?.tr('orders') ?? 'Orders'),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Tab(
+                        height: 40,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.request_quote_outlined,
+                                  size: 18),
+                              const SizedBox(width: 8),
+                              Text(
+                                _trLocale(
+                                  context,
+                                  l10n,
+                                  'quotes',
+                                  en: 'Quotes',
+                                  he: 'הצעות מחיר',
+                                  ar: 'عروض الأسعار',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
 
-          // ─── Orders Table ─────────────────────────────
+          // ─── Orders / Quotes panes (kept mounted + animated) ─────
           Expanded(
-            child: ordersAsync.when(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                AnimatedVisibilityPane(
+                  active: _selectedTab == 0,
+                  slideDx: Directionality.of(context) == TextDirection.rtl
+                      ? 0.035
+                      : -0.035,
+                  appearContent: false,
+                  child: ordersAsync.when(
               data: (orders) {
                 var filtered = orders.where((o) {
                   final isClosedStatusSelected = _statusFilter == 'Canceled' ||
@@ -488,11 +643,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                       .toSet()
                 ];
                 final totalItems = filtered.length;
-                final totalPages = (totalItems / _rowsPerPage).ceil();
-                int validCurrentPage = _currentPage;
-                if (validCurrentPage > totalPages && totalPages > 0) {
-                  validCurrentPage = totalPages;
-                }
+                final totalPages =
+                    totalItems == 0 ? 1 : (totalItems / _rowsPerPage).ceil();
+                int validCurrentPage = _currentPage.clamp(1, totalPages);
                 final startIndex = (validCurrentPage - 1) * _rowsPerPage;
                 final endIndex =
                     (startIndex + _rowsPerPage).clamp(0, totalItems);
@@ -500,13 +653,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                     ? <Order>[]
                     : filtered.sublist(startIndex, endIndex);
 
-                return AnimatedFadeIn(
-                  duration: AppAnimations.durationMedium,
-                  scaleBegin: 0.98,
-                  child: Column(
+                return Column(
                     children: [
                       // ─── Search & Filter Control Bar ──────────────
-                      Padding(
+                      _listAppear(
+                        active: _selectedTab == 0,
+                        slideDy: 10,
+                        child: Padding(
                         padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -690,9 +843,14 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                           ],
                         ),
                       ),
+                      ),
 
                       Expanded(
-                        child: filtered.isEmpty
+                        child: _listAppear(
+                          active: _selectedTab == 0,
+                          delay: const Duration(milliseconds: 55),
+                          slideDy: 18,
+                          child: filtered.isEmpty
                             ? Center(
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -843,7 +1001,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                                                 ),
                                               ],
                                               rows: paginatedFiltered
-                                                  .map((order) {
+                                                  .asMap()
+                                                  .entries
+                                                  .map((entry) {
+                                                final i = entry.key;
+                                                final order = entry.value;
                                                 final statusColor =
                                                     orderStatusColor(
                                                         order.status);
@@ -876,19 +1038,25 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                                                       ),
                                                     ),
                                                     DataCell(
-                                                      SizedBox(
-                                                        width: 48,
-                                                        child: Center(
-                                                          child: Text(
-                                                            '#${order.orderNumber ?? '-'}',
-                                                            style: GoogleFonts
-                                                                .assistant(
-                                                              color: AppTheme
-                                                                  .onSurface,
-                                                              fontWeight:
-                                                                  FontWeight
-                                                                      .w800,
-                                                              fontSize: 13,
+                                                      StaggeredFadeIn(
+                                                        key: ValueKey(
+                                                            'ord-$_ordersAppearGen-$i'),
+                                                        index: i.clamp(0, 12),
+                                                        stepMilliseconds: 40,
+                                                        child: SizedBox(
+                                                          width: 48,
+                                                          child: Center(
+                                                            child: Text(
+                                                              '#${order.orderNumber ?? '-'}',
+                                                              style: GoogleFonts
+                                                                  .assistant(
+                                                                color: AppTheme
+                                                                    .onSurface,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w800,
+                                                                fontSize: 13,
+                                                              ),
                                                             ),
                                                           ),
                                                         ),
@@ -1059,13 +1227,28 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                                   },
                                 ),
                               ),
+                        ),
                       ),
-                      const Divider(height: 1),
-                      _buildPaginationControls(
-                          validCurrentPage, totalPages, totalItems),
+                      _listAppear(
+                        active: _selectedTab == 0,
+                        delay: const Duration(milliseconds: 100),
+                        slideDy: 10,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Divider(height: 1),
+                            _buildPaginationControls(
+                              currentPage: validCurrentPage,
+                              totalPages: totalPages == 0 ? 1 : totalPages,
+                              totalItems: totalItems,
+                              startIndex: totalItems == 0 ? 0 : startIndex,
+                              endIndex: endIndex,
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
-                  ),
-                );
+                  );
               },
               loading: () => const AppLoadingOverlay(
                 isLoading: true,
@@ -1077,6 +1260,17 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   style: GoogleFonts.assistant(color: AppTheme.error),
                 ),
               ),
+              ),
+                ),
+                AnimatedVisibilityPane(
+                  active: _selectedTab == 1,
+                  slideDx: Directionality.of(context) == TextDirection.rtl
+                      ? -0.035
+                      : 0.035,
+                  appearContent: false,
+                  child: QuotesListTab(active: _selectedTab == 1),
+                ),
+              ],
             ),
           ),
         ],
@@ -1084,58 +1278,107 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     );
   }
 
-  Widget _buildPaginationControls(
-      int currentPage, int totalPages, int totalItems) {
-    if (totalPages <= 1) return const SizedBox.shrink();
+  Widget _buildPaginationControls({
+    required int currentPage,
+    required int totalPages,
+    required int totalItems,
+    required int startIndex,
+    required int endIndex,
+  }) {
+    final l10n = AppLocalizations.of(context);
+    final showingStart = totalItems == 0 ? 0 : startIndex + 1;
+    final showingEnd = endIndex;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       color: AppTheme.surfaceContainerLowest,
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
-            'סה״כ $totalItems רשומות',
+            totalItems == 0
+                ? _trLocale(context, l10n, 'noData',
+                    en: 'No records', he: 'אין רשומות', ar: 'لا سجلات')
+                : _trLocale(
+                    context,
+                    l10n,
+                    'showingRange',
+                    en: 'Showing $showingStart–$showingEnd of $totalItems',
+                    he: 'מציג $showingStart–$showingEnd מתוך $totalItems',
+                    ar: 'عرض $showingStart–$showingEnd من $totalItems',
+                  ),
             style: GoogleFonts.assistant(
               color: AppTheme.onSurfaceVariant,
               fontSize: 14,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.chevron_right_rounded),
-                onPressed: currentPage > 1
-                    ? () => setState(() => _currentPage = currentPage - 1)
-                    : null,
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryGold.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                      color: AppTheme.primaryGold.withValues(alpha: 0.3)),
-                ),
-                child: Text(
-                  '$currentPage / $totalPages',
-                  style: GoogleFonts.assistant(
-                    color: AppTheme.primaryGold,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.chevron_left_rounded),
-                onPressed: currentPage < totalPages
-                    ? () => setState(() => _currentPage = currentPage + 1)
-                    : null,
-              ),
+          const Spacer(),
+          Text(
+            _trLocale(context, l10n, 'rowsPerPage',
+                en: 'Rows', he: 'שורות', ar: 'صفوف'),
+            style: GoogleFonts.assistant(
+              color: AppTheme.onSurfaceVariant,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 8),
+          DropdownMenu<int>(
+            key: ValueKey('orders_rows_$_rowsPerPage'),
+            initialSelection: _rowsPerPage,
+            width: 88,
+            selectOnly: true,
+            enableFilter: false,
+            enableSearch: false,
+            textStyle: GoogleFonts.assistant(
+              fontWeight: FontWeight.w700,
+              fontSize: 14,
+            ),
+            menuStyle: appDropdownMenuStyle(),
+            inputDecorationTheme: appDropdownInputDecorationTheme()
+                .copyWith(fillColor: Colors.white),
+            onSelected: (v) {
+              if (v == null) return;
+              setState(() {
+                _rowsPerPage = v;
+                _currentPage = 1;
+              });
+            },
+            dropdownMenuEntries: [
+              for (final n in _rowsPerPageOptions)
+                DropdownMenuEntry<int>(value: n, label: '$n'),
             ],
+          ),
+          const SizedBox(width: 12),
+          IconButton(
+            icon: const Icon(Icons.chevron_right_rounded),
+            onPressed: currentPage > 1
+                ? () => setState(() => _currentPage = currentPage - 1)
+                : null,
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryGold.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: AppTheme.primaryGold.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Text(
+              '$currentPage / $totalPages',
+              style: GoogleFonts.assistant(
+                color: AppTheme.primaryGold,
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.chevron_left_rounded),
+            onPressed: currentPage < totalPages
+                ? () => setState(() => _currentPage = currentPage + 1)
+                : null,
           ),
         ],
       ),
@@ -3020,3 +3263,4 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     }
   }
 }
+

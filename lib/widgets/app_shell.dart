@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../config/app_animations.dart';
 import '../l10n/app_localizations.dart';
 import '../providers/providers.dart';
 import '../config/app_theme.dart';
@@ -23,6 +24,31 @@ class AppShell extends ConsumerStatefulWidget {
 class _AppShellState extends ConsumerState<AppShell> {
   int? _prevIndex;
   bool _sidebarCollapsed = false;
+  /// Lazily keep visited pages mounted so switches stay smooth + stateful.
+  final Set<int> _mountedPages = {0};
+
+  Widget _pageForIndex(int index) {
+    switch (index) {
+      case 0:
+        return const DashboardScreen();
+      case 1:
+        return const CustomersScreen();
+      case 2:
+        return const OrdersScreen();
+      case 3:
+        return const FixingScreen();
+      case 4:
+        return const PaymentsScreen();
+      case 5:
+        return const AssembliesScreen();
+      case 6:
+        return const SuppliersScreen();
+      case 7:
+        return const InventoryScreen();
+      default:
+        return const DashboardScreen();
+    }
+  }
 
   /// Sidebar labels: for Hebrew/Arabic, always use the explicit [he]/[ar] strings.
   /// Otherwise a stale cached `app_*.arb` asset (common on Flutter web) can still
@@ -51,19 +77,12 @@ class _AppShellState extends ConsumerState<AppShell> {
     final prev = _prevIndex ?? selectedIndex;
     final movingForward = selectedIndex >= prev;
     _prevIndex = selectedIndex;
+    _mountedPages.add(selectedIndex);
 
-    final screens = [
-      const DashboardScreen(),
-      const CustomersScreen(),
-      const OrdersScreen(),
-      const FixingScreen(),
-      const PaymentsScreen(),
-      const AssembliesScreen(),
-      const SuppliersScreen(),
-      const InventoryScreen(),
-    ];
-    // Keys so AnimatedSwitcher can animate between screens
-    final screenKeys = List.generate(screens.length, (i) => ValueKey<int>(i));
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+    final travelDx = movingForward
+        ? (isRtl ? -0.03 : 0.03)
+        : (isRtl ? 0.03 : -0.03);
 
     final navItems = [
       _NavItem(
@@ -261,6 +280,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                           child: InkWell(
                             borderRadius: BorderRadius.circular(12),
                             onTap: () {
+                              setState(() => _mountedPages.add(index));
                               ref
                                   .read(selectedNavIndexProvider.notifier)
                                   .setIndex(index);
@@ -391,40 +411,28 @@ class _AppShellState extends ConsumerState<AppShell> {
               ],
             ),
           ),
-          // Main content with heavier cross-fade + subtle scale
+          // Main content — kept-alive panes with fade / slide / appear
           Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 420),
-              switchInCurve: Curves.easeOutQuart,
-              switchOutCurve: Curves.easeInQuart,
-              transitionBuilder: (child, animation) {
-                final slide = Tween<Offset>(
-                  begin: Offset(movingForward ? 0.04 : -0.04, 0),
-                  end: Offset.zero,
-                ).animate(
-                  CurvedAnimation(
-                      parent: animation, curve: Curves.easeOutCubic),
-                );
-                final scale = Tween<double>(begin: 0.98, end: 1.0).animate(
-                  CurvedAnimation(
-                      parent: animation, curve: Curves.easeOutQuart),
-                );
-                return FadeTransition(
-                  opacity: animation,
-                  child: SlideTransition(
-                    position: slide,
-                    child: ScaleTransition(
-                      scale: scale,
-                      alignment: Alignment.center,
-                      child: child,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                for (final i in (_mountedPages.toList()..sort()))
+                  KeyedSubtree(
+                    key: ValueKey('nav_page_$i'),
+                    child: AnimatedVisibilityPane(
+                      active: selectedIndex == i,
+                      // Active page uses zero offset; others park off in the
+                      // travel direction so the incoming page rises in nicely.
+                      slideDx: selectedIndex == i ? 0 : travelDx,
+                      slideDy: selectedIndex == i ? 0 : 0.012,
+                      duration: AppAnimations.durationNormal,
+                      appearContent: true,
+                      appearDelay: const Duration(milliseconds: 45),
+                      appearSlideDy: 18,
+                      child: _pageForIndex(i),
                     ),
                   ),
-                );
-              },
-              child: KeyedSubtree(
-                key: screenKeys[selectedIndex],
-                child: screens[selectedIndex],
-              ),
+              ],
             ),
           ),
         ],
