@@ -10,6 +10,7 @@ import '../services/supplier_service.dart';
 import '../services/room_service.dart';
 import '../services/inventory_service.dart';
 import '../services/quote_service.dart';
+import '../services/timeline_note_service.dart';
 import '../models/customer.dart';
 import '../models/fixing_ticket.dart';
 import '../models/inventory_item.dart';
@@ -18,6 +19,7 @@ import '../models/payment.dart';
 import '../models/quote.dart';
 import '../models/supplier.dart';
 import '../models/room.dart';
+import '../models/timeline_note.dart';
 import 'dart:ui';
 
 // ─── SUPABASE CLIENT ──────────────────────────
@@ -82,6 +84,10 @@ final inventoryServiceProvider = Provider<InventoryService>((ref) {
 
 final quoteServiceProvider = Provider<QuoteService>((ref) {
   return QuoteService(ref.watch(supabaseClientProvider));
+});
+
+final timelineNoteServiceProvider = Provider<TimelineNoteService>((ref) {
+  return TimelineNoteService(ref.watch(supabaseClientProvider));
 });
 
 // ─── DATA PROVIDERS (AsyncNotifier pattern) ───
@@ -233,6 +239,27 @@ final customerPaymentsProvider = FutureProvider.family
       return service.getByCustomer(customerId);
     });
 
+// Timeline notes / reminders (shared across all users).
+// Tolerates the table being absent so the dashboard still renders before the
+// migration is pushed — same guard as quotesProvider above.
+final timelineNotesProvider =
+    FutureProvider.autoDispose<List<TimelineNote>>((ref) async {
+  try {
+    return await ref
+        .watch(timelineNoteServiceProvider)
+        .getAll()
+        .timeout(const Duration(seconds: 10));
+  } catch (e) {
+    final msg = e.toString();
+    if (msg.contains('PGRST205') ||
+        (msg.contains('timeline_notes') && msg.contains('schema cache')) ||
+        msg.contains('Could not find the table')) {
+      return <TimelineNote>[];
+    }
+    rethrow;
+  }
+});
+
 // Fixing tickets (open / pending only)
 final fixingTicketsProvider = FutureProvider<List<FixingTicket>>((ref) async {
   final service = ref.watch(fixingServiceProvider);
@@ -259,6 +286,20 @@ final totalUnpaidDebtsProvider = FutureProvider.autoDispose<double>((
   final service = ref.watch(paymentServiceProvider);
   return service.getTotalUnpaidDebts();
 });
+
+/// Time window the dashboard KPI row and trend chart report on.
+enum DashboardPeriod { monthly, yearly }
+
+class DashboardPeriodNotifier extends Notifier<DashboardPeriod> {
+  @override
+  DashboardPeriod build() => DashboardPeriod.monthly;
+  void setPeriod(DashboardPeriod period) => state = period;
+}
+
+final dashboardPeriodProvider =
+    NotifierProvider<DashboardPeriodNotifier, DashboardPeriod>(
+  DashboardPeriodNotifier.new,
+);
 
 // Selected navigation index
 class NavIndexNotifier extends Notifier<int> {

@@ -12,7 +12,7 @@ import '../screens/login_screen.dart';
 /// Signs the user out after a fixed period of input inactivity.
 /// Resets the timer on any pointer interaction, keyboard input, or focus change.
 class InactivityLogoutWrapper extends ConsumerStatefulWidget {
-  static const Duration timeout = Duration(minutes: 20);
+  static const Duration timeout = Duration(minutes: 60);
 
   final Widget child;
 

@@ -22,7 +22,7 @@ class QuotePdfService {
   static const _muted = PdfColor.fromInt(0xFF5F6364);
 
   // Letterhead constants, copied from the printed pad.
-  static const _phoneLine = '09-7661627 | 054-6788988';
+  static const _phoneLine = '09-7661627 | 052-5337555';
   static const _emailLine = 'Royallight2022r@gmail.com';
   static const _addressHebrew = 'טירה המשולש, ת.ד.';
   static const _addressPoBox = '3247';
