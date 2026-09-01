@@ -43,7 +43,8 @@ royal-lights/
 │   ├── providers/providers.dart  # ALL Riverpod providers live in this single file
 │   ├── services/                 # One Service<Domain> + AuthService, WhatsAppService, SessionLocalStorage
 │   ├── screens/
-│   │   ├── dashboard_screen.dart
+│   │   ├── dashboard_screen.dart  # Layout + KPI/debt/pipeline cards
+│   │   ├── dashboard/             # Dashboard parts (see §16)
 │   │   ├── login_screen.dart
 │   │   ├── customers/, orders/, payments/, suppliers/, inventory/,
 │   │   ├── fixing/, assemblies/
@@ -135,7 +136,7 @@ Reusable widgets in `lib/widgets/`:
 | Widget | What it's for |
 |---|---|
 | `AppShell` | Top-level scaffold with side rail + animated body |
-| `InactivityLogoutWrapper` | 20-min idle → `signOut()`; resets on pointer events |
+| `InactivityLogoutWrapper` | 60-min idle → `signOut()`; resets on pointer events |
 | `EditorialScreenTitle` | Standard 42 pt page header with gold underline |
 | `BrandLogo` | Centred logo PNG with sizing knobs |
 | `BarcodeScanDialog` | Mobile-scanner sheet (native + web) |
@@ -148,7 +149,7 @@ Reusable widgets in `lib/widgets/`:
 - Login: email + password via `AuthService.signIn()` (Supabase GoTrue). Min 6-char password.
 - Errors are translated from Supabase codes (`invalid_credentials`, `email_not_confirmed`, `rate_limit`, `user_banned`, network timeouts) into friendly Hebrew messages.
 - Logout: `ref.read(authServiceProvider).signOut()`.
-- **Inactivity logout: 20 minutes**, implemented in `lib/widgets/inactivity_logout_wrapper.dart`. Wraps `AppShell` in `main.dart`. Any `Listener` pointer event resets the timer.
+- **Inactivity logout: 60 minutes**, implemented in `lib/widgets/inactivity_logout_wrapper.dart` (single source of truth: `InactivityLogoutWrapper.timeout`). Wraps `AppShell` in `main.dart`. Any `Listener` pointer event resets the timer.
 - Session persistence: `SessionLocalStorage` — `window.sessionStorage` on web, in-memory on native. (Means the user is logged out of the native app on every launch.)
 
 ## 9. Supabase
@@ -224,13 +225,16 @@ Repair / warranty tickets. Items can be pulled from the customer's existing orde
 
 ## 12. Testing & static analysis
 
-- **Tests**: only `test/widget_test.dart` (Flutter scaffold). The suite is effectively empty — verify by running the app.
+- **Tests**: `test/widget_test.dart` is the empty Flutter scaffold. The one real suite is `test/dashboard_layout_test.dart` — it renders the dashboard with stubbed providers at 1440 / 1000 / 700 px in Hebrew and English and fails on any layout exception. Everything else is verified by running the app.
+  - Gotcha when adding widget tests here: `MaterialApp` withholds `home` until `AppLocalizations`' async `.arb` load resolves, and `tester.pump()` cannot drive that I/O. Do the first `pumpWidget` inside `tester.runAsync(...)`, then assert a sentinel is on screen — otherwise the test silently passes against an empty tree.
 - **Lints**: `flutter_lints` defaults, no custom rules.
 - **Run `flutter analyze` before declaring a task done.**
-- The repo currently has **9 pre-existing info-level lints** that are out of scope:
+- The repo currently has **11 pre-existing info-level lints** that are out of scope:
   - `avoid_print` in `create_user.dart` (×7) and `lib/services/whatsapp_service.dart` (×1)
   - `curly_braces_in_flow_control_structures` in `lib/screens/inventory/inventory_screen.dart:185`
-- **Goal: don't introduce new ones.** Don't fix the existing 9 unless explicitly asked.
+  - `prefer_interpolation_to_compose_strings` in `lib/screens/customers/customer_detail_screen.dart:3625`
+  - `depend_on_referenced_packages` in `tool/bidi_probe.dart:3`
+- **Goal: don't introduce new ones.** Don't fix the existing 11 unless explicitly asked.
 
 ## 13. Things rolled back — don't auto-implement
 
@@ -267,3 +271,28 @@ The corresponding migrations were applied to the DB even though the Dart code wa
 | Send a WhatsApp message | `WhatsAppService.sendMessage(phone, message)` |
 | Upload an image | `image_picker` → bytes → `supabase.storage.from(<bucket>).uploadBinary(...)`. Pattern in `inventory_screen.dart:2030+`. |
 | Build a styled dropdown | Use the helpers in `lib/widgets/app_dropdown_styles.dart` |
+| Add a dashboard card / metric | `lib/screens/dashboard/dashboard_metrics.dart` for the maths, then a card in `dashboard_screen.dart` (see §16) |
+
+## 16. Dashboard
+
+`lib/screens/dashboard_screen.dart` holds the layout and the KPI / receivables / pipeline cards. Supporting parts live in `lib/screens/dashboard/`:
+
+| File | Contents |
+|---|---|
+| `dashboard_metrics.dart` | **All aggregation maths** — period windows, deltas, debt bands, debt aging, trend buckets. Pure functions over fetched lists; no widgets, no Riverpod. Change a number's definition here, not in the UI. |
+| `dashboard_ui.dart` | `dashTr(...)` l10n helper, `money()` / `count()` formatters (the only place `₪` is written), card chrome (`dashCardDecoration`, `DashCardHeader`, `DashPill`, `DashEmptyState`). |
+| `dashboard_charts.dart` | `TrendBarChart` (single-series bars) and `SegmentedProportionBar` (composition bar + legend), plus `severityRamp` / `rampSteps`. |
+| `timeline_cards.dart` | `RemindersCard` (today + tomorrow alerts) and `CalendarCard` (inline month grid). |
+| `timeline_note_dialog.dart` | Add / edit / delete a reminder. |
+
+Conventions worth keeping:
+
+- **The period toggle** (`dashboardPeriodProvider`, monthly / yearly) drives the KPI row and the trend chart. Add period-sensitive figures through `windowFor(period, now)`.
+- **Never a dual-axis chart.** Orders and new customers are stacked small multiples sharing an x axis, not two y-scales on one frame.
+- **Ordered bands use `rampSteps(n)`** — one hue, light→dark. Green/amber/red is *not* used for adjacent fills: it is indistinguishable under protanopia. Every band also carries a visible label and count, so nothing depends on colour alone.
+- Cards degrade to `?? const []` on error, and the `_ErrorBanner` says so — don't let a failed fetch read as "zero debt".
+- Inventory, fixing and assemblies are deliberately **not** on the dashboard; they stay in the nav rail and quick actions.
+
+### Reminders (`timeline_notes`)
+
+Shared dated notes — every authenticated user sees and edits all of them (RLS: `authenticated` full access). A note surfaces in `RemindersCard` **on its date and the day before**; there is no done/dismissed flag because alerts age out on their own. Table created by `supabase/migrations/20260901120000_create_timeline_notes.sql`. `timelineNotesProvider` tolerates the table being absent (`PGRST205` guard), so the dashboard still renders before the migration is pushed.
