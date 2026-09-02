@@ -59,18 +59,19 @@ royal-lights/
 
 ## 4. Navigation
 
-`lib/widgets/app_shell.dart` renders a collapsible side rail (220 px ↔ 76 px) with these 8 entries in order:
+`lib/widgets/app_shell.dart` renders a collapsible side rail (220 px ↔ 76 px) with these 9 entries in order:
 
 1. Dashboard
 2. Customers
-3. Orders
-4. Fixing (repair tickets)
-5. Payments
-6. Assemblies
-7. Suppliers
-8. Inventory
+3. Quotes
+4. Orders
+5. Fixing (repair tickets)
+6. Payments
+7. Assemblies
+8. Suppliers
+9. Inventory
 
-Selected nav index lives in `selectedNavIndexProvider`. The body is an `AnimatedSwitcher`; each screen is keyed by `ValueKey(index)`.
+Selected nav index lives in `selectedNavIndexProvider`. Visited pages stay mounted with fade/appear transitions via `AnimatedVisibilityPane`.
 
 ## 5. State management (Riverpod)
 

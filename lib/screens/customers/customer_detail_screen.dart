@@ -601,7 +601,7 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
 
   void _goToOrdersFiltered() {
     ref.read(ordersCustomerFilterProvider.notifier).setFilter(_customer);
-    ref.read(selectedNavIndexProvider.notifier).setIndex(2);
+    ref.read(selectedNavIndexProvider.notifier).setIndex(3);
     Navigator.of(context).pop();
   }
 
@@ -2302,7 +2302,7 @@ class _PaymentsListSection extends ConsumerWidget {
 
     void goPayments() {
       ref.read(paymentsCustomerFilterProvider.notifier).setFilter(customer);
-      ref.read(selectedNavIndexProvider.notifier).setIndex(4);
+      ref.read(selectedNavIndexProvider.notifier).setIndex(5);
       Navigator.of(context).pop();
     }
 

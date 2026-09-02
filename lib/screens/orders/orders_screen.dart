@@ -17,17 +17,14 @@ import '../../widgets/app_round_checkbox.dart';
 import '../../widgets/confirm_send_customer_wa.dart';
 import '../../widgets/editorial_screen_title.dart';
 import 'order_form_screen.dart';
-import 'quotes_list_tab.dart';
 
-/// Soft fade + rise for Orders/Quotes list sections on tab switch.
 Widget _listAppear({
-  required bool active,
   required Widget child,
   Duration delay = Duration.zero,
   double slideDy = 14,
 }) {
   return AppearOnActivate(
-    active: active,
+    active: true,
     delay: delay,
     duration: AppAnimations.durationNormal,
     slideDy: slideDy,
@@ -53,8 +50,7 @@ class OrdersScreen extends ConsumerStatefulWidget {
   ConsumerState<OrdersScreen> createState() => _OrdersScreenState();
 }
 
-class _OrdersScreenState extends ConsumerState<OrdersScreen>
-    with SingleTickerProviderStateMixin {
+class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   final TextEditingController _searchCtrl = TextEditingController();
   String _statusFilter = 'All';
   String _createdByFilter = 'All';
@@ -64,34 +60,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen>
   int _currentPage = 1;
   int _rowsPerPage = 15;
   static const _rowsPerPageOptions = [10, 15, 25, 50];
-  late final TabController _tabController;
-  int _selectedTab = 0;
-  int _ordersAppearGen = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(
-      length: 2,
-      vsync: this,
-      animationDuration: const Duration(milliseconds: 180),
-    );
-    _tabController.addListener(() {
-      if (!mounted) return;
-      // Rebuild only when the selected index changes — not on every
-      // animation tick (that was making Orders↔Quotes feel laggy).
-      if (_tabController.index != _selectedTab) {
-        setState(() {
-          _selectedTab = _tabController.index;
-          if (_selectedTab == 0) _ordersAppearGen++;
-        });
-      }
-    });
-  }
+  final int _ordersAppearGen = 0;
 
   @override
   void dispose() {
-    _tabController.dispose();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -429,24 +401,22 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen>
         elevation: 0,
         toolbarHeight: 0, // Hide standard appbar to use custom header
       ),
-      floatingActionButton: _selectedTab == 0
-          ? Padding(
-              // Keep clear of the bottom pagination / page switcher.
-              padding: const EdgeInsets.only(bottom: 64),
-              child: FloatingActionButton(
-                backgroundColor: AppTheme.secondary,
-                foregroundColor: AppTheme.onPrimary,
-                elevation: 2,
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const OrderFormScreen()),
-                  );
-                },
-                tooltip: l10n?.tr('newOrder') ?? 'New Order',
-                child: const Icon(Icons.add_rounded, size: 28),
-              ),
-            )
-          : null,
+      floatingActionButton: Padding(
+        // Keep clear of the bottom pagination / page switcher.
+        padding: const EdgeInsets.only(bottom: 64),
+        child: FloatingActionButton(
+          backgroundColor: AppTheme.secondary,
+          foregroundColor: AppTheme.onPrimary,
+          elevation: 2,
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const OrderFormScreen()),
+            );
+          },
+          tooltip: l10n?.tr('newOrder') ?? 'New Order',
+          child: const Icon(Icons.add_rounded, size: 28),
+        ),
+      ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -458,109 +428,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen>
               top: 20,
               bottom: 12,
             ),
-            trailing: Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: IntrinsicWidth(
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: AppTheme.surfaceContainer.withValues(alpha: 0.7),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: AppTheme.outlineVariant.withValues(alpha: 0.25),
-                    ),
-                  ),
-                  child: TabBar(
-                    controller: _tabController,
-                    isScrollable: true,
-                    tabAlignment: TabAlignment.start,
-                    dividerColor: Colors.transparent,
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-                    overlayColor:
-                        const WidgetStatePropertyAll(Colors.transparent),
-                    indicator: BoxDecoration(
-                      color: AppTheme.surfaceContainerLowest,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: AppTheme.secondary.withValues(alpha: 0.45),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.04),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    labelColor: AppTheme.onSurface,
-                    unselectedLabelColor: AppTheme.onSurfaceVariant,
-                    labelStyle: GoogleFonts.assistant(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 14,
-                    ),
-                    unselectedLabelStyle: GoogleFonts.assistant(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    ),
-                    tabs: [
-                      Tab(
-                        height: 40,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.receipt_long_rounded, size: 18),
-                              const SizedBox(width: 8),
-                              Text(l10n?.tr('orders') ?? 'Orders'),
-                            ],
-                          ),
-                        ),
-                      ),
-                      Tab(
-                        height: 40,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.request_quote_outlined,
-                                  size: 18),
-                              const SizedBox(width: 8),
-                              Text(
-                                _trLocale(
-                                  context,
-                                  l10n,
-                                  'quotes',
-                                  en: 'Quotes',
-                                  he: 'הצעות מחיר',
-                                  ar: 'عروض الأسعار',
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
           ),
-
-          // ─── Orders / Quotes panes (kept mounted + animated) ─────
           Expanded(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                AnimatedVisibilityPane(
-                  active: _selectedTab == 0,
-                  slideDx: Directionality.of(context) == TextDirection.rtl
-                      ? 0.035
-                      : -0.035,
-                  appearContent: false,
-                  child: ordersAsync.when(
+            child: ordersAsync.when(
+
               data: (orders) {
                 var filtered = orders.where((o) {
                   final isClosedStatusSelected = _statusFilter == 'Canceled' ||
@@ -657,7 +528,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen>
                     children: [
                       // ─── Search & Filter Control Bar ──────────────
                       _listAppear(
-                        active: _selectedTab == 0,
                         slideDy: 10,
                         child: Padding(
                         padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
@@ -847,7 +717,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen>
 
                       Expanded(
                         child: _listAppear(
-                          active: _selectedTab == 0,
                           delay: const Duration(milliseconds: 55),
                           slideDy: 18,
                           child: filtered.isEmpty
@@ -1230,7 +1099,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen>
                         ),
                       ),
                       _listAppear(
-                        active: _selectedTab == 0,
                         delay: const Duration(milliseconds: 100),
                         slideDy: 10,
                         child: Column(
@@ -1260,17 +1128,6 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen>
                   style: GoogleFonts.assistant(color: AppTheme.error),
                 ),
               ),
-              ),
-                ),
-                AnimatedVisibilityPane(
-                  active: _selectedTab == 1,
-                  slideDx: Directionality.of(context) == TextDirection.rtl
-                      ? -0.035
-                      : 0.035,
-                  appearContent: false,
-                  child: QuotesListTab(active: _selectedTab == 1),
-                ),
-              ],
             ),
           ),
         ],
