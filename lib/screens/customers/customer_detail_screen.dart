@@ -105,47 +105,36 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
   Future<void> _deleteCustomer(AppLocalizations? l10n) async {
     if (_deletingCustomer) return;
 
+    // Count first: deleting a customer takes their orders and payments with it,
+    // so the dialog has to say so instead of letting the user find out after.
+    ({int orders, int payments}) impact;
+    setState(() => _deletingCustomer = true);
+    try {
+      impact =
+          await ref.read(customerServiceProvider).getDeletionImpact(_customer.id);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _deletingCustomer = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${l10n?.tr('error') ?? 'Error'}: $e'),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _deletingCustomer = false);
+
+    final hasHistory = impact.orders > 0 || impact.payments > 0;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.surfaceContainerLowest,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          l10n?.tr('delete') ?? 'Delete',
-          style: GoogleFonts.assistant(fontWeight: FontWeight.w700),
-        ),
-        content: Text(
-          _trOrLocale(
-            context,
-            l10n,
-            'deleteCustomerConfirm',
-            en: 'Delete ${_customer.cardName}?',
-            he: 'למחוק את ${_customer.cardName}?',
-            ar: 'حذف ${_customer.cardName}؟',
-          ),
-          style: GoogleFonts.assistant(fontSize: 16),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(
-              l10n?.tr('cancel') ?? 'Cancel',
-              style: GoogleFonts.assistant(color: AppTheme.onSurfaceVariant),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.error,
-              foregroundColor: Colors.white,
-              elevation: 0,
-            ),
-            child: Text(
-              l10n?.tr('delete') ?? 'Delete',
-              style: GoogleFonts.assistant(fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
+      builder: (ctx) => _DeleteCustomerDialog(
+        cardName: _customer.cardName,
+        orders: impact.orders,
+        payments: impact.payments,
+        requireTypedName: hasHistory,
+        l10n: l10n,
       ),
     );
 
@@ -157,6 +146,11 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
       ref.invalidate(customersProvider);
       ref.invalidate(customerOrdersProvider(_customer.id));
       ref.invalidate(customerPaymentsProvider(_customer.id));
+      // The delete took orders and payments with it, so the global lists and
+      // every dashboard figure derived from them are stale too.
+      ref.invalidate(ordersProvider);
+      ref.invalidate(paymentsProvider);
+      ref.invalidate(quotesProvider);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3987,6 +3981,188 @@ class _QuoteFormScreenState extends ConsumerState<_QuoteFormScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Confirmation for an irreversible customer delete.
+///
+/// Deleting a customer also destroys their orders and payments, so the dialog
+/// names the exact counts. When there is any history to lose it additionally
+/// requires typing the card name — the same friction GitHub uses for deleting
+/// a repository, and for the same reason.
+class _DeleteCustomerDialog extends StatefulWidget {
+  final String cardName;
+  final int orders;
+  final int payments;
+  final bool requireTypedName;
+  final AppLocalizations? l10n;
+
+  const _DeleteCustomerDialog({
+    required this.cardName,
+    required this.orders,
+    required this.payments,
+    required this.requireTypedName,
+    required this.l10n,
+  });
+
+  @override
+  State<_DeleteCustomerDialog> createState() => _DeleteCustomerDialogState();
+}
+
+class _DeleteCustomerDialogState extends State<_DeleteCustomerDialog> {
+  final _confirmCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _confirmCtrl.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _confirmCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _canDelete =>
+      !widget.requireTypedName ||
+      _confirmCtrl.text.trim() == widget.cardName.trim();
+
+  String _impactLine(BuildContext context) {
+    final o = widget.orders;
+    final p = widget.payments;
+    return switch (Localizations.localeOf(context).languageCode) {
+      'he' => 'יימחקו גם $o הזמנות ו-$p תשלומים. לא ניתן לשחזר.',
+      'ar' => 'سيتم أيضًا حذف $o طلبات و-$p دفعات. لا يمكن التراجع.',
+      _ => '$o orders and $p payments will be deleted too. This cannot be undone.',
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = widget.l10n;
+
+    return AlertDialog(
+      backgroundColor: AppTheme.surfaceContainerLowest,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text(
+        _trOrLocale(context, l10n, 'deleteCustomerTitle',
+            en: 'Delete customer', he: 'מחיקת לקוח', ar: 'حذف العميل'),
+        style: GoogleFonts.assistant(fontWeight: FontWeight.w700),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _trOrLocale(
+              context,
+              l10n,
+              'deleteCustomerConfirm',
+              en: 'Delete ${widget.cardName}?',
+              he: 'למחוק את ${widget.cardName}?',
+              ar: 'حذف ${widget.cardName}؟',
+            ),
+            style: GoogleFonts.assistant(fontSize: 16),
+          ),
+          if (widget.orders > 0 || widget.payments > 0) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.error.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: AppTheme.error.withValues(alpha: 0.25),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.warning_amber_rounded,
+                      size: 18, color: AppTheme.error),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _impactLine(context),
+                      style: GoogleFonts.assistant(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.onSurface,
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (widget.requireTypedName) ...[
+            const SizedBox(height: 16),
+            Text(
+              _trOrLocale(context, l10n, 'deleteCustomerTypeName',
+                  en: 'Type the card name to confirm:',
+                  he: 'הקלד את שם הכרטיס לאישור:',
+                  ar: 'اكتب اسم البطاقة للتأكيد:'),
+              style: GoogleFonts.assistant(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              widget.cardName,
+              style: GoogleFonts.assistant(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: AppTheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _confirmCtrl,
+              autofocus: true,
+              style: GoogleFonts.assistant(color: AppTheme.onSurface),
+              decoration: InputDecoration(
+                isDense: true,
+                filled: true,
+                fillColor:
+                    AppTheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: Text(
+            l10n?.tr('cancel') ?? 'Cancel',
+            style: GoogleFonts.assistant(color: AppTheme.onSurfaceVariant),
+          ),
+        ),
+        ElevatedButton(
+          onPressed: _canDelete ? () => Navigator.pop(context, true) : null,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.error,
+            foregroundColor: Colors.white,
+            disabledBackgroundColor:
+                AppTheme.error.withValues(alpha: 0.25),
+            disabledForegroundColor: Colors.white70,
+            elevation: 0,
+          ),
+          child: Text(
+            l10n?.tr('delete') ?? 'Delete',
+            style: GoogleFonts.assistant(fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
     );
   }
 }

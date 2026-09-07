@@ -27,7 +27,7 @@ class QuotePdfService {
   static const _addressHebrew = 'טירה המשולש, ת.ד.';
   static const _addressPoBox = '3247';
   static const _businessIdLabel = 'ח.פ.';
-  static const _businessIdNumber = '558480125';
+  static const _businessIdNumber = '517321014';
 
   static final Map<
       String,
@@ -125,7 +125,8 @@ class QuotePdfService {
     );
 
     // Visual left→right columns. For RTL we reverse so מס' sits on the right.
-    const tableFlex = [36.0, 310.0, 58.0, 96.0]; // מס' | פירוט | כמות | סכום
+    // מס' | פירוט | כמות | מחיר יחידה | סכום
+    const tableFlex = [32.0, 248.0, 46.0, 86.0, 88.0];
     const totalsFlex = [120.0, 130.0]; // label | amount
 
     Map<int, pw.TableColumnWidth> columnWidths(List<double> logicalFlex) {
@@ -301,22 +302,8 @@ class QuotePdfService {
           ),
         );
       }
-      if (item.quantity != 1) {
-        metaParts.add(
-          pw.Row(
-            mainAxisSize: pw.MainAxisSize.min,
-            children: isRtl
-                ? [
-                    ltrText(moneyText(item.price), size: 7.5, color: _muted),
-                    rtlText(' :${t.unitPrice}', size: 7.5, color: _muted),
-                  ]
-                : [
-                    ltrText('${t.unitPrice}: ', size: 7.5, color: _muted),
-                    ltrText(moneyText(item.price), size: 7.5, color: _muted),
-                  ],
-          ),
-        );
-      }
+      // Unit price used to be a chip here when quantity != 1; it now has its
+      // own column, so repeating it would just be noise.
 
       return pw.Padding(
         padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 6),
@@ -358,6 +345,7 @@ class QuotePdfService {
               cell(t.num, isBold: true, size: 9),
               cell(t.detail, isBold: true, size: 9),
               cell(t.qty, isBold: true, size: 9),
+              cell(t.unitPrice, isBold: true, size: 9),
               cell(t.amount, isBold: true, size: 9),
             ]),
           ),
@@ -368,6 +356,13 @@ class QuotePdfService {
                 detailCell(items[i]),
                 cell(
                   _formatQty(items[i].quantity),
+                  size: 9,
+                  forceLtr: true,
+                ),
+                // Unit price excludes extras; extras are itemised in the
+                // detail cell and folded into the line total.
+                cell(
+                  moneyText(items[i].price),
                   size: 9,
                   forceLtr: true,
                 ),
@@ -864,7 +859,7 @@ class QuotePdfService {
           notes: 'הערות',
           code: 'מק״ט',
           extras: 'תוספות',
-          unitPrice: 'מחיר ליחידה',
+          unitPrice: 'מחיר יחידה',
         ),
       'ar' => (
           docTitle: 'عرض سعر',
