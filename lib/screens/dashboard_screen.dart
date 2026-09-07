@@ -202,7 +202,7 @@ class DashboardScreen extends ConsumerWidget {
                         delta: deltaPercent(periodOrders, periodOrdersPrev),
                         icon: Icons.receipt_long_rounded,
                         accent: AppTheme.primary,
-                        onTap: () => go(2),
+                        onTap: () => go(3),
                       ),
                       _KpiCard(
                         label: dashTr(context, l10n, 'quotes',
@@ -293,7 +293,7 @@ class DashboardScreen extends ConsumerWidget {
                           secondary: _PipelineCard(
                             orders: orders,
                             loading: ordersAsync.isLoading,
-                            onTap: () => go(2),
+                            onTap: () => go(3),
                             l10n: l10n,
                           ),
                         ),
@@ -1379,13 +1379,13 @@ class _QuickActionsCard extends StatelessWidget {
         Icons.add_shopping_cart_rounded,
         dashTr(context, l10n, 'newOrder',
             en: 'New order', he: 'הזמנה חדשה', ar: 'طلب جديد'),
-        2
+        3
       ),
       (
         Icons.payment_rounded,
         dashTr(context, l10n, 'newPayment',
             en: 'New payment', he: 'תשלום חדש', ar: 'دفعة جديدة'),
-        4
+        5
       ),
       (
         Icons.person_add_rounded,
@@ -1397,25 +1397,31 @@ class _QuickActionsCard extends StatelessWidget {
         Icons.storefront_rounded,
         dashTr(context, l10n, 'suppliers',
             en: 'Suppliers', he: 'סוכנים', ar: 'الموردون'),
-        6
+        7
       ),
       (
         Icons.inventory_2_outlined,
         dashTr(context, l10n, 'inventory',
             en: 'Inventory', he: 'מלאי', ar: 'المخزون'),
-        7
+        8
       ),
       (
         Icons.build_circle_outlined,
         dashTr(context, l10n, 'fixing',
             en: 'Fixing', he: 'תיקונים', ar: 'الإصلاحات'),
-        3
+        4
       ),
       (
         Icons.build_rounded,
         dashTr(context, l10n, 'assemblies',
             en: 'Assemblies', he: 'הרכבות', ar: 'التركيبات'),
-        5
+        6
+      ),
+      (
+        Icons.request_quote_outlined,
+        dashTr(context, l10n, 'quotes',
+            en: 'Quotes', he: 'הצעות מחיר', ar: 'عروض الأسعار'),
+        2
       ),
     ];
 

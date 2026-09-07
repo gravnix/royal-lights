@@ -7,6 +7,7 @@ import '../config/app_theme.dart';
 import 'brand_logo.dart';
 import '../screens/dashboard_screen.dart';
 import '../screens/customers/customers_screen.dart';
+import '../screens/quotes/quotes_screen.dart';
 import '../screens/orders/orders_screen.dart';
 import '../screens/payments/payments_screen.dart';
 import '../screens/assemblies/assemblies_screen.dart';
@@ -34,16 +35,18 @@ class _AppShellState extends ConsumerState<AppShell> {
       case 1:
         return const CustomersScreen();
       case 2:
-        return const OrdersScreen();
+        return const QuotesScreen();
       case 3:
-        return const FixingScreen();
+        return const OrdersScreen();
       case 4:
-        return const PaymentsScreen();
+        return const FixingScreen();
       case 5:
-        return const AssembliesScreen();
+        return const PaymentsScreen();
       case 6:
-        return const SuppliersScreen();
+        return const AssembliesScreen();
       case 7:
+        return const SuppliersScreen();
+      case 8:
         return const InventoryScreen();
       default:
         return const DashboardScreen();
@@ -105,6 +108,17 @@ class _AppShellState extends ConsumerState<AppShell> {
           en: 'Customers',
           he: 'לקוחות',
           ar: 'العملاء',
+        ),
+      ),
+      _NavItem(
+        Icons.request_quote_outlined,
+        _l10nOrLocale(
+          context,
+          l10n,
+          'quotes',
+          en: 'Quotes',
+          he: 'הצעות מחיר',
+          ar: 'عروض الأسعار',
         ),
       ),
       _NavItem(
