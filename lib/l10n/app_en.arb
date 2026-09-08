@@ -418,5 +418,10 @@
   "calendarSubtitle": "Pick a day to add a reminder",
   "previousMonth": "Previous month",
   "nextMonth": "Next month",
-  "close": "Close"
+  "close": "Close",
+  "newQuote": "New quote",
+  "quoteChooseCustomer": "Choose a customer",
+  "quotePickCustomerFirst": "Choose a customer first",
+  "deleteCustomerTitle": "Delete customer",
+  "deleteCustomerTypeName": "Type the card name to confirm:"
 }

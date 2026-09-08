@@ -418,5 +418,10 @@
   "calendarSubtitle": "اختر يومًا لإضافة تذكير",
   "previousMonth": "الشهر السابق",
   "nextMonth": "الشهر التالي",
-  "close": "إغلاق"
+  "close": "إغلاق",
+  "newQuote": "عرض سعر جديد",
+  "quoteChooseCustomer": "اختر عميلاً",
+  "quotePickCustomerFirst": "اختر عميلاً أولاً",
+  "deleteCustomerTitle": "حذف العميل",
+  "deleteCustomerTypeName": "اكتب اسم البطاقة للتأكيد:"
 }

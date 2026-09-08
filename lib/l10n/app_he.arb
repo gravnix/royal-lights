@@ -418,5 +418,10 @@
   "calendarSubtitle": "בחר יום כדי להוסיף תזכורת",
   "previousMonth": "חודש קודם",
   "nextMonth": "חודש הבא",
-  "close": "סגור"
+  "close": "סגור",
+  "newQuote": "הצעת מחיר חדשה",
+  "quoteChooseCustomer": "בחר לקוח",
+  "quotePickCustomerFirst": "יש לבחור לקוח תחילה",
+  "deleteCustomerTitle": "מחיקת לקוח",
+  "deleteCustomerTypeName": "הקלד את שם הכרטיס לאישור:"
 }
