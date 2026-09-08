@@ -6,10 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart' show DateFormat, NumberFormat;
 import 'package:uuid/uuid.dart';
 import '../../config/app_date_format.dart';
 import '../../config/app_theme.dart';
+import '../../services/order_pdf_service.dart';
 import '../../services/whatsapp_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/customer.dart';
@@ -4198,17 +4198,61 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
 
     final code = mounted ? Localizations.localeOf(context).languageCode : 'he';
 
-    final message = _buildCustomerOrderMessage(
-      languageCode: code,
-      customer: customer,
-      orderNumber: _existingOrder?.orderNumber,
-      items: orderItems,
-      totalPrice: _totalPrice,
-      assemblyDate: _assemblyRequired ? _assemblyDate : null,
-      isOrderItemsUpdate: isOrderItemsUpdate,
-    );
+    final order = _existingOrder;
+    if (order == null) return;
 
-    await WhatsAppService.sendMessage(phone, message);
+    // The order details go out as a PDF, not as a wall of WhatsApp text.
+    try {
+      await OrderPdfService.warmUp(code);
+      final pdfBytes = await OrderPdfService.generate(
+        customer: customer,
+        order: order,
+        items: orderItems,
+        languageCode: code,
+      );
+      final pdfUrl =
+          await ref.read(orderServiceProvider).uploadPdf(order.id, pdfBytes);
+
+      await WhatsAppService.sendDocument(
+        phone,
+        pdfUrl,
+        _customerOrderCaption(
+          languageCode: code,
+          customer: customer,
+          orderNumber: order.orderNumber,
+          isOrderItemsUpdate: isOrderItemsUpdate,
+        ),
+        fileName: 'order-${order.orderNumber ?? order.id}.pdf',
+      );
+    } catch (_) {
+      // Sending is best-effort and must never block saving the order — the
+      // same contract the text message had.
+    }
+  }
+
+  /// Short WhatsApp caption that accompanies the order PDF. The figures now
+  /// live in the document, so this only has to say what arrived.
+  String _customerOrderCaption({
+    required String languageCode,
+    required Customer customer,
+    required int? orderNumber,
+    required bool isOrderItemsUpdate,
+  }) {
+    final name = customer.customerName.trim().isNotEmpty
+        ? customer.customerName
+        : customer.cardName;
+    final numText = orderNumber != null ? ' #$orderNumber' : '';
+    return switch (languageCode) {
+      'he' => isOrderItemsUpdate
+          ? 'שלום $name,\nההזמנה$numText עודכנה. הפרטים המלאים בקובץ המצורף.'
+          : 'שלום $name,\nתודה על הזמנתך$numText! הפרטים המלאים בקובץ המצורף.',
+      'ar' => isOrderItemsUpdate
+          ? 'مرحبًا $name،\nتم تحديث الطلب$numText. التفاصيل في الملف المرفق.'
+          : 'مرحبًا $name،\nشكرًا على طلبك$numText! التفاصيل في الملف المرفق.',
+      _ => isOrderItemsUpdate
+          ? 'Hello $name,\nYour order$numText has been updated. Full details are in the attached PDF.'
+          : 'Hello $name,\nThank you for your order$numText! Full details are in the attached PDF.',
+    };
   }
 
   /// Stable fingerprint of line-item fields that affect the customer order summary.
@@ -4241,115 +4285,6 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
       ].join('\u001f'));
     }
     return '${items.length}\u001e${parts.join('\u001d')}';
-  }
-
-  String _buildCustomerOrderMessage({
-    required String languageCode,
-    required Customer customer,
-    required int? orderNumber,
-    required List<OrderItem> items,
-    required double totalPrice,
-    required DateTime? assemblyDate,
-    bool isOrderItemsUpdate = false,
-  }) {
-    final lang =
-        (languageCode == 'he' || languageCode == 'ar') ? languageCode : 'en';
-    final money = NumberFormat('#,##0.00', 'en_US');
-    final dateFmt = DateFormat('dd/MM/yyyy');
-
-    final greetingName = customer.customerName.trim().isNotEmpty
-        ? customer.customerName
-        : customer.cardName;
-
-    final greeting = switch (lang) {
-      'he' => 'שלום $greetingName (כרטיס: ${customer.cardName}),',
-      'ar' => 'مرحبًا $greetingName (البطاقة: ${customer.cardName})،',
-      _ => 'Hello $greetingName (card: ${customer.cardName}),',
-    };
-
-    final orderHeader = isOrderItemsUpdate
-        ? switch (lang) {
-            'he' => orderNumber != null
-                ? 'עדכון: ההזמנה #$orderNumber עודכנה (שינוי בפריטים) 📋'
-                : 'עדכון: ההזמנה עודכנה (שינוי בפריטים) 📋',
-            'ar' => orderNumber != null
-                ? 'تحديث: تم تعديل الطلب #$orderNumber (تغيير في الأصناف) 📋'
-                : 'تحديث: تم تعديل الطلب (تغيير في الأصناف) 📋',
-            _ => orderNumber != null
-                ? 'Update: order #$orderNumber was revised (line items changed) 📋'
-                : 'Update: your order was revised (line items changed) 📋',
-          }
-        : switch (lang) {
-            'he' => orderNumber != null
-                ? 'הזמנה חדשה #$orderNumber נפתחה עבורך 🎉'
-                : 'הזמנה חדשה נפתחה עבורך 🎉',
-            'ar' => orderNumber != null
-                ? 'تم فتح طلب جديد #$orderNumber لك 🎉'
-                : 'تم فتح طلب جديد لك 🎉',
-            _ => orderNumber != null
-                ? 'A new order #$orderNumber has been opened for you 🎉'
-                : 'A new order has been opened for you 🎉',
-          };
-
-    final itemsHeader = switch (lang) {
-      'he' => '📦 פריטים:',
-      'ar' => '📦 المنتجات:',
-      _ => '📦 Items:',
-    };
-    final qtyLabel =
-        switch (lang) { 'he' => 'כמות', 'ar' => 'الكمية', _ => 'Qty' };
-    final roomLabel =
-        switch (lang) { 'he' => 'חדר', 'ar' => 'الغرفة', _ => 'Room' };
-    final extrasLabel =
-        switch (lang) { 'he' => 'תוספת', 'ar' => 'إضافة', _ => 'Extras' };
-    final priceLabel =
-        switch (lang) { 'he' => 'מחיר', 'ar' => 'السعر', _ => 'Price' };
-
-    final itemLines = <String>[];
-    for (var i = 0; i < items.length; i++) {
-      final it = items[i];
-      final lineTotal = it.quantity * (it.price + it.extrasPrice);
-      final name = it.name.trim().isEmpty ? '—' : it.name.trim();
-      final extras = (it.extras ?? '').trim();
-      final room = (it.roomLabel ?? '').trim();
-
-      final block = StringBuffer();
-      block.writeln('${i + 1}) $name');
-      final meta = <String>[];
-      meta.add('$qtyLabel: ${formatQty(it.quantity)}');
-      if (room.isNotEmpty) meta.add('$roomLabel: $room');
-      block.writeln('   ${meta.join(' | ')}');
-      if (extras.isNotEmpty) {
-        final extrasPart = it.extrasPrice > 0
-            ? '$extras (+₪${money.format(it.extrasPrice)})'
-            : extras;
-        block.writeln('   $extrasLabel: $extrasPart');
-      }
-      block.write('   $priceLabel: ₪${money.format(lineTotal)}');
-      itemLines.add(block.toString());
-    }
-
-    final totalLabel = switch (lang) {
-      'he' => '💰 סה"כ הזמנה',
-      'ar' => '💰 إجمالي الطلب',
-      _ => '💰 Order total',
-    };
-    final assemblyLabel = switch (lang) {
-      'he' => '🔧 תאריך הרכבה',
-      'ar' => '🔧 تاريخ التركيب',
-      _ => '🔧 Assembly date',
-    };
-
-    final sections = <String>[
-      greeting,
-      orderHeader,
-      '$itemsHeader\n${itemLines.join('\n\n')}',
-      '$totalLabel: ₪${money.format(totalPrice)}',
-    ];
-    if (assemblyDate != null) {
-      sections.add('$assemblyLabel: ${dateFmt.format(assemblyDate)}');
-    }
-    return sections.join('\n\n');
   }
 
   String _buildSupplierOrderMessage({

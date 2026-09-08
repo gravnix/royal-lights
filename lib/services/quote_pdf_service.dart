@@ -10,9 +10,23 @@ import '../models/customer.dart';
 import '../models/quote.dart';
 import '../models/quote_item.dart';
 
-/// Quote PDF — replica of the store's printed quote pad:
-/// centred letterhead, contact strip, quote number, customer fill-in
-/// lines and a plain black-grid items table (מס' / פירוט / כמות / סכום).
+/// Which document the shared renderer is producing. The layout is identical;
+/// only the heading and the totals convention differ.
+enum PdfDocKind {
+  /// Quote — discount comes off BEFORE VAT.
+  quote,
+
+  /// Order — discount comes off the VAT-INCLUSIVE total, matching the order
+  /// form's arithmetic so the printed figure equals the stored total_price.
+  order,
+}
+
+/// Quote / order PDF — replica of the store's printed pad:
+/// centred letterhead, contact strip, document number, customer fill-in
+/// lines and a plain black-grid items table.
+///
+/// Orders render through the same code via [PdfDocKind.order]; see
+/// [OrderPdfService], which maps an Order onto this renderer.
 ///
 /// Important: the pdf package's RTL path runs a broken bidi pass that
 /// reverses digit/Latin runs. Hebrew labels use RTL; every number, price,
@@ -51,6 +65,12 @@ class QuotePdfService {
     required Quote quote,
     required List<QuoteItem> items,
     required String languageCode,
+    PdfDocKind kind = PdfDocKind.quote,
+
+    /// One-off fee added to the subtotal before VAT — the order form's
+    /// assembly/installation charge. Quotes pass 0.
+    double extraFee = 0,
+    String? extraFeeLabel,
   }) async {
     final lang =
         (languageCode == 'he' || languageCode == 'ar') ? languageCode : 'en';
@@ -96,16 +116,34 @@ class QuotePdfService {
     String moneyText(double value) => '₪${money.format(value)}';
 
     final t = _labels(lang);
-    final subtotal = items.fold<double>(0, (s, i) => s + i.lineTotal);
-    // Quotes discount BEFORE VAT — VAT is charged on the discounted amount.
-    // (Orders apply their discount to the VAT-inclusive total; that
-    // difference is deliberate, see CLAUDE.md.)
-    final discount = quote.discountType == 'fixed_amount'
-        ? quote.discountPercentage.clamp(0, subtotal).toDouble()
-        : subtotal * (quote.discountPercentage.clamp(0, 100) / 100);
-    final netTotal = subtotal - discount;
-    final vat = quote.vatEnabled ? netTotal * 0.18 : 0.0;
-    final grandTotal = netTotal + vat;
+    final linesTotal = items.fold<double>(0, (s, i) => s + i.lineTotal);
+    final subtotal = linesTotal + extraFee;
+
+    // The two documents genuinely differ here, and the printed number has to
+    // match what each module stored, so the conventions are kept apart.
+    final double discount;
+    final double netTotal; // subtotal after discount (quotes) / incl. VAT (orders)
+    final double vat;
+    final double grandTotal;
+
+    if (kind == PdfDocKind.order) {
+      // Orders: VAT first, then discount off the VAT-inclusive total.
+      vat = quote.vatEnabled ? subtotal * 0.18 : 0.0;
+      final withVat = subtotal + vat;
+      discount = quote.discountType == 'fixed_amount'
+          ? quote.discountPercentage.clamp(0, withVat).toDouble()
+          : withVat * (quote.discountPercentage.clamp(0, 100) / 100);
+      netTotal = withVat;
+      grandTotal = withVat - discount;
+    } else {
+      // Quotes: discount first, VAT charged on the discounted amount.
+      discount = quote.discountType == 'fixed_amount'
+          ? quote.discountPercentage.clamp(0, subtotal).toDouble()
+          : subtotal * (quote.discountPercentage.clamp(0, 100) / 100);
+      netTotal = subtotal - discount;
+      vat = quote.vatEnabled ? netTotal * 0.18 : 0.0;
+      grandTotal = netTotal + vat;
+    }
 
     final customerName = customer.customerName.trim().isNotEmpty
         ? customer.customerName
@@ -116,8 +154,11 @@ class QuotePdfService {
         quote.quoteNumber != null ? '${quote.quoteNumber}'.padLeft(5, '0') : '—';
     final dateText = dateFmt.format(now);
 
+    final docTitle = kind == PdfDocKind.order ? t.orderTitle : t.docTitle;
+    final docNoLabel = kind == PdfDocKind.order ? t.orderNo : t.quoteNo;
+
     final pdf = pw.Document(
-      title: '${t.docTitle} $quoteNumberText'.trim(),
+      title: '$docTitle $quoteNumberText'.trim(),
       author: 'Royal Light',
     );
 
@@ -562,7 +603,7 @@ class QuotePdfService {
                     children: [
                       ltrText(quoteNumberText, size: 9, isBold: true, color: _muted),
                       pw.SizedBox(width: 4),
-                      rtlText(t.quoteNo, size: 9, isBold: true, color: _muted),
+                      rtlText(docNoLabel, size: 9, isBold: true, color: _muted),
                     ],
                   ),
                 ],
@@ -604,7 +645,7 @@ class QuotePdfService {
                   children: [
                     ltrText(quoteNumberText, size: 14, isBold: true),
                     pw.SizedBox(width: 6),
-                    rtlText(t.quoteNo, size: 14, isBold: true),
+                    rtlText(docNoLabel, size: 14, isBold: true),
                   ],
                 ),
               ],
@@ -635,36 +676,78 @@ class QuotePdfService {
                 child: pw.Table(
                   border: grid,
                   columnWidths: columnWidths(totalsFlex),
-                  children: [
-                    // Subtotal is only worth its own row when something is
-                    // subtracted from it below; otherwise it IS the total.
-                    if (discount > 0 || quote.vatEnabled)
-                      totalsRow(t.subtotal, value: moneyText(subtotal)),
-                    if (discount > 0)
-                      totalsRow(
-                        t.discount,
-                        labelLtrSuffix: quote.discountType == 'percentage'
-                            ? '${_formatQty(quote.discountPercentage)}%'
-                            : null,
-                        value: '-${moneyText(discount)}',
-                      ),
-                    // Net line only helps when VAT then applies on top of it.
-                    if (discount > 0 && quote.vatEnabled)
-                      totalsRow(t.netTotal, value: moneyText(netTotal)),
-                    if (quote.vatEnabled)
-                      totalsRow(
-                        t.vat,
-                        labelLtrSuffix: '18%',
-                        value: moneyText(vat),
-                      ),
-                    totalsRow(
-                      quote.vatEnabled
-                          ? t.totalIncVat
-                          : (discount > 0 ? t.netTotal : t.subtotal),
-                      value: moneyText(grandTotal),
-                      isBold: true,
-                    ),
-                  ],
+                  children: kind == PdfDocKind.order
+                      ? [
+                          // Orders: items → assembly → VAT → discount → total.
+                          // The first row shows the LINES only when there is a
+                          // separate assembly row beneath it, so the column
+                          // adds up down the page instead of counting the fee
+                          // twice.
+                          totalsRow(
+                            t.subtotal,
+                            value: moneyText(
+                              extraFee > 0 ? linesTotal : subtotal,
+                            ),
+                          ),
+                          if (extraFee > 0)
+                            totalsRow(
+                              extraFeeLabel ?? t.assemblyFee,
+                              value: moneyText(extraFee),
+                            ),
+                          if (quote.vatEnabled)
+                            totalsRow(
+                              t.vat,
+                              labelLtrSuffix: '18%',
+                              value: moneyText(vat),
+                            ),
+                          if (discount > 0)
+                            totalsRow(
+                              t.discount,
+                              labelLtrSuffix:
+                                  quote.discountType == 'percentage'
+                                      ? '${_formatQty(quote.discountPercentage)}%'
+                                      : null,
+                              value: '-${moneyText(discount)}',
+                            ),
+                          totalsRow(
+                            t.totalToPay,
+                            value: moneyText(grandTotal),
+                            isBold: true,
+                          ),
+                        ]
+                      : [
+                          // Quotes: subtotal → discount → net → VAT → total.
+                          // Subtotal is only worth its own row when something
+                          // is subtracted from it below; otherwise it IS the
+                          // total.
+                          if (discount > 0 || quote.vatEnabled)
+                            totalsRow(t.subtotal, value: moneyText(subtotal)),
+                          if (discount > 0)
+                            totalsRow(
+                              t.discount,
+                              labelLtrSuffix:
+                                  quote.discountType == 'percentage'
+                                      ? '${_formatQty(quote.discountPercentage)}%'
+                                      : null,
+                              value: '-${moneyText(discount)}',
+                            ),
+                          // Net line only helps when VAT applies on top of it.
+                          if (discount > 0 && quote.vatEnabled)
+                            totalsRow(t.netTotal, value: moneyText(netTotal)),
+                          if (quote.vatEnabled)
+                            totalsRow(
+                              t.vat,
+                              labelLtrSuffix: '18%',
+                              value: moneyText(vat),
+                            ),
+                          totalsRow(
+                            quote.vatEnabled
+                                ? t.totalIncVat
+                                : (discount > 0 ? t.netTotal : t.subtotal),
+                            value: moneyText(grandTotal),
+                            isBold: true,
+                          ),
+                        ],
                 ),
               ),
             ),
@@ -858,6 +941,10 @@ class QuotePdfService {
     String unitPrice,
     String discount,
     String netTotal,
+    String orderTitle,
+    String orderNo,
+    String totalToPay,
+    String assemblyFee,
   }) _labels(String lang) {
     return switch (lang) {
       'he' => (
@@ -880,6 +967,10 @@ class QuotePdfService {
           unitPrice: 'מחיר יחידה',
           discount: 'הנחה',
           netTotal: 'סה״כ אחרי הנחה',
+          orderTitle: 'הזמנה',
+          orderNo: 'הזמנה מס׳',
+          totalToPay: 'סה״כ לתשלום',
+          assemblyFee: 'הרכבה והתקנה',
         ),
       'ar' => (
           docTitle: 'عرض سعر',
@@ -901,6 +992,10 @@ class QuotePdfService {
           unitPrice: 'سعر الوحدة',
           discount: 'خصم',
           netTotal: 'المجموع بعد الخصم',
+          orderTitle: 'طلب',
+          orderNo: 'طلب رقم',
+          totalToPay: 'المبلغ المستحق',
+          assemblyFee: 'التركيب',
         ),
       _ => (
           docTitle: 'Price Quote',
@@ -922,6 +1017,10 @@ class QuotePdfService {
           unitPrice: 'Unit price',
           discount: 'Discount',
           netTotal: 'Total after discount',
+          orderTitle: 'Order',
+          orderNo: 'Order no.',
+          totalToPay: 'Total to pay',
+          assemblyFee: 'Assembly & installation',
         ),
     };
   }

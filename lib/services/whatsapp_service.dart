@@ -51,8 +51,11 @@ class WhatsAppService {
   static Future<bool> sendDocument(
     String phone,
     String documentUrl,
-    String caption,
-  ) async {
+    String caption, {
+    /// Name the recipient sees in WhatsApp. Defaults to the quote name so
+    /// existing callers are unaffected.
+    String fileName = 'quote.pdf',
+  }) async {
     final jid = _toJid(phone);
     try {
       final response = await _supabase.functions
@@ -63,7 +66,7 @@ class WhatsAppService {
               'message': caption,
               'mediaUrl': documentUrl,
               'type': 'document',
-              'fileName': 'quote.pdf',
+              'fileName': fileName,
             },
           )
           .timeout(const Duration(seconds: 15));
