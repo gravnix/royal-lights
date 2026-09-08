@@ -45,6 +45,7 @@ royal-lights/
 │   ├── screens/
 │   │   ├── dashboard_screen.dart  # Layout + KPI/debt/pipeline cards
 │   │   ├── dashboard/             # Dashboard parts (see §16)
+│   │   ├── quotes/                # QuotesScreen + QuoteFormScreen (see §17)
 │   │   ├── login_screen.dart
 │   │   ├── customers/, orders/, payments/, suppliers/, inventory/,
 │   │   ├── fixing/, assemblies/
@@ -230,12 +231,11 @@ Repair / warranty tickets. Items can be pulled from the customer's existing orde
   - Gotcha when adding widget tests here: `MaterialApp` withholds `home` until `AppLocalizations`' async `.arb` load resolves, and `tester.pump()` cannot drive that I/O. Do the first `pumpWidget` inside `tester.runAsync(...)`, then assert a sentinel is on screen — otherwise the test silently passes against an empty tree.
 - **Lints**: `flutter_lints` defaults, no custom rules.
 - **Run `flutter analyze` before declaring a task done.**
-- The repo currently has **11 pre-existing info-level lints** that are out of scope:
+- The repo currently has **10 pre-existing info-level lints** that are out of scope:
   - `avoid_print` in `create_user.dart` (×7) and `lib/services/whatsapp_service.dart` (×1)
   - `curly_braces_in_flow_control_structures` in `lib/screens/inventory/inventory_screen.dart:185`
-  - `prefer_interpolation_to_compose_strings` in `lib/screens/customers/customer_detail_screen.dart:3625`
   - `depend_on_referenced_packages` in `tool/bidi_probe.dart:3`
-- **Goal: don't introduce new ones.** Don't fix the existing 11 unless explicitly asked.
+- **Goal: don't introduce new ones.** Don't fix the existing 10 unless explicitly asked.
 
 ## 13. Things rolled back — don't auto-implement
 
@@ -297,3 +297,81 @@ Conventions worth keeping:
 ### Reminders (`timeline_notes`)
 
 Shared dated notes — every authenticated user sees and edits all of them (RLS: `authenticated` full access). A note surfaces in `RemindersCard` **on its date and the day before**; there is no done/dismissed flag because alerts age out on their own. Table created by `supabase/migrations/20260901120000_create_timeline_notes.sql`. `timelineNotesProvider` tolerates the table being absent (`PGRST205` guard), so the dashboard still renders before the migration is pushed.
+
+## 17. Quotes, orders and the PDF pipeline
+
+### One renderer, two documents
+
+`lib/services/quote_pdf_service.dart` renders **both** quotes and orders. It is
+parameterised by `PdfDocKind`, which changes two things and nothing else:
+
+| | `PdfDocKind.quote` | `PdfDocKind.order` |
+|---|---|---|
+| Heading | הצעה מס׳ | הזמנה מס׳ |
+| Discount | off the **pre-VAT** subtotal; VAT is then charged on the discounted amount | off the **VAT-inclusive** total |
+
+**That divergence is intentional**, not an oversight — orders have always
+discounted post-VAT (`order_form_screen.dart`), and the customer asked for
+quotes to discount pre-VAT. The printed figure must equal the stored
+`total_price`, so do not "harmonise" one to the other without changing the
+corresponding form.
+
+`OrderPdfService` is a thin mapper from `Order`/`OrderItem` onto that renderer.
+Add PDF features once, in `QuotePdfService`, and both documents get them.
+
+Orders also pass `extraFee` for the assembly charge — it is billed once per
+order, not per line, so it gets its own totals row and the subtotal above it
+shows the lines only.
+
+### Bidi — read this before "fixing" reversed numbers
+
+The `pdf` package mangles digit runs on its RTL path *in some configurations*,
+and there are stale screenshots in `tool/pdf_preview/` from an older generator
+that show exactly that. **The current renderer is correct.** It works because
+the page is forced LTR (`pageTheme.textDirection: ltr`) and direction is set
+per widget, with every generated number drawn through `ltrText`/`forceLtr`.
+
+A "run-aware bidi compensation" pass was tried and **broke working output** —
+`הרצל 15` became `הרצל 51`, `LED` became `DEL`. If you are about to add one,
+render before and after and compare:
+
+```
+flutter test test/quote_pdf_test.dart   # -> build/quote_probe.pdf
+flutter test test/order_pdf_test.dart   # -> build/order_probe.pdf
+```
+
+Both dump real PDFs whose item names, notes and address deliberately mix
+Hebrew with digits and Latin. Look at them.
+
+### WhatsApp
+
+Order **details** are sent as a PDF, never as text — automatically on order
+save, best-effort inside a try/catch so a failed send never blocks the save.
+What remains as text, deliberately: the **payments report** and the short
+status notices (order canceled / ready for pickup / supplier POs / stock
+requests).
+
+`WhatsAppService.sendDocument` takes a `fileName` (defaults to `quote.pdf`).
+
+### Storage buckets
+
+`quote-pdfs` and `order-pdfs`, both public read / authenticated write. Both
+upload with `upsert: true` to a stable path, so both append a `?v=<millis>`
+cache-buster — without it WhatsApp keeps serving the previous version.
+
+### Quote form
+
+`lib/screens/quotes/quote_form_screen.dart`. `customer` is **nullable**: opened
+from a customer page it is passed in; opened from the Quotes screen's "+" it
+shows a searchable picker. After creating a quote, invalidate **both**
+`customerQuotesProvider(id)` and `quotesProvider`.
+
+### Deleting a customer
+
+`orders` and `payments` are `ON DELETE RESTRICT`, so the row cannot be deleted
+while either exists. `CustomerService.delete` therefore removes payments, then
+orders, then the customer — explicitly, rather than relaxing the FKs to
+CASCADE, so financial history can only be destroyed through that one
+deliberate path. `getDeletionImpact()` counts first and the dialog requires
+typing the card name. The stored photo is deleted **last**, so a failed row
+delete cannot orphan a live customer's image.
