@@ -118,6 +118,10 @@ class _QuoteFormScreenState extends ConsumerState<QuoteFormScreen> {
   /// Chosen in the form when the screen was opened without one.
   Customer? _pickedCustomer;
 
+  /// 'percentage' or 'fixed_amount', matching the order form and the DB.
+  String _discountType = 'percentage';
+  final _discountCtrl = TextEditingController();
+
   Customer? get _customer => widget.customer ?? _pickedCustomer;
 
   @override
@@ -130,6 +134,7 @@ class _QuoteFormScreenState extends ConsumerState<QuoteFormScreen> {
   void dispose() {
     _hideInventoryDropdown();
     _notesController.dispose();
+    _discountCtrl.dispose();
     for (final item in _items) {
       item.itemNumberCtrl.dispose();
       item.nameCtrl.dispose();
@@ -559,9 +564,27 @@ class _QuoteFormScreenState extends ConsumerState<QuoteFormScreen> {
   double get _subtotal =>
       _items.fold<double>(0, (s, i) => s + i.lineTotal);
 
-  double get _vat => _subtotal * 0.18;
+  /// Raw value typed in the discount box, clamped to something sane.
+  /// A percentage caps at 100; a fixed amount cannot exceed the subtotal.
+  double get _discountInput {
+    final v = double.tryParse(_discountCtrl.text.trim()) ?? 0;
+    if (v <= 0) return 0;
+    return _discountType == 'percentage'
+        ? (v > 100 ? 100 : v)
+        : (v > _subtotal ? _subtotal : v);
+  }
 
-  double get _grandTotal => _subtotal + _vat;
+  /// Discount in shekels.
+  double get _discountAmount => _discountType == 'percentage'
+      ? _subtotal * (_discountInput / 100)
+      : _discountInput;
+
+  /// Discount comes off BEFORE VAT, so VAT is charged on the net amount.
+  double get _netTotal => _subtotal - _discountAmount;
+
+  double get _vat => _netTotal * 0.18;
+
+  double get _grandTotal => _netTotal + _vat;
 
   Future<void> _sendQuote() async {
     final emptyIdx = _items.indexWhere((i) =>
@@ -636,6 +659,8 @@ class _QuoteFormScreenState extends ConsumerState<QuoteFormScreen> {
         id: '',
         customerId: customer.id,
         totalPrice: _grandTotal,
+        discountPercentage: _discountInput,
+        discountType: _discountType,
         notes: _notesController.text.trim().isEmpty
             ? null
             : _notesController.text.trim(),
@@ -1153,7 +1178,82 @@ class _QuoteFormScreenState extends ConsumerState<QuoteFormScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 8),
+
+                // Discount — applied BEFORE VAT, so the VAT row below is
+                // charged on the discounted amount.
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 120,
+                      child: TextField(
+                        controller: _discountCtrl,
+                        keyboardType:
+                            const TextInputType.numberWithOptions(decimal: true),
+                        onChanged: (_) => setState(() {}),
+                        style: GoogleFonts.assistant(fontSize: 14),
+                        decoration: _quoteFieldDecoration(
+                          labelText: _trOrLocale(context, l10n, 'discountLabel',
+                              en: 'Discount', he: 'הנחה', ar: 'خصم'),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'percentage', label: Text('%')),
+                        ButtonSegment(value: 'fixed_amount', label: Text('₪')),
+                      ],
+                      selected: {_discountType},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (v) =>
+                          setState(() => _discountType = v.first),
+                      style: ButtonStyle(
+                        visualDensity: VisualDensity.compact,
+                        textStyle: WidgetStatePropertyAll(
+                          GoogleFonts.assistant(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    if (_discountAmount > 0)
+                      Text(
+                        '-₪${money.format(_discountAmount)}',
+                        style: GoogleFonts.assistant(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.error,
+                        ),
+                      ),
+                  ],
+                ),
+
+                if (_discountAmount > 0) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _trOrLocale(context, l10n, 'totalAfterDiscount',
+                            en: 'Total after discount',
+                            he: 'סה״כ אחרי הנחה',
+                            ar: 'المجموع بعد الخصم'),
+                        style: GoogleFonts.assistant(
+                            fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                      Text(
+                        '₪${money.format(_netTotal)}',
+                        style: GoogleFonts.assistant(
+                            fontSize: 14, fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                ],
+
+                const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [

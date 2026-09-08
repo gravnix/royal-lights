@@ -423,5 +423,6 @@
   "quoteChooseCustomer": "בחר לקוח",
   "quotePickCustomerFirst": "יש לבחור לקוח תחילה",
   "deleteCustomerTitle": "מחיקת לקוח",
-  "deleteCustomerTypeName": "הקלד את שם הכרטיס לאישור:"
+  "deleteCustomerTypeName": "הקלד את שם הכרטיס לאישור:",
+  "totalAfterDiscount": "סה״כ אחרי הנחה"
 }

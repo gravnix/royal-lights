@@ -81,6 +81,49 @@ void main() {
       }
     });
 
+    test('renders a percentage discount before VAT', () async {
+      final bytes = await QuotePdfService.generate(
+        customer: customer,
+        quote: Quote(
+          id: 'q2',
+          customerId: 'c1',
+          quoteNumber: 16,
+          totalPrice: 0,
+          discountPercentage: 10,
+          discountType: 'percentage',
+          notes: 'הנחה של 10% לפני מע״מ.',
+        ),
+        items: items,
+        languageCode: 'he',
+      );
+      expect(bytes.length, greaterThan(1000));
+      try {
+        final out = File('build/quote_discount_pct.pdf');
+        out.parent.createSync(recursive: true);
+        out.writeAsBytesSync(bytes);
+      } catch (_) {}
+    });
+
+    test('renders a fixed-amount discount', () async {
+      final bytes = await QuotePdfService.generate(
+        customer: customer,
+        quote: Quote(
+          id: 'q3',
+          customerId: 'c1',
+          quoteNumber: 17,
+          totalPrice: 0,
+          discountPercentage: 150,
+          discountType: 'fixed_amount',
+        ),
+        items: items,
+        languageCode: 'he',
+      );
+      expect(bytes.length, greaterThan(1000));
+      try {
+        File('build/quote_discount_fixed.pdf').writeAsBytesSync(bytes);
+      } catch (_) {}
+    });
+
     test('handles an empty item list without throwing', () async {
       final bytes = await QuotePdfService.generate(
         customer: customer,

@@ -423,5 +423,6 @@
   "quoteChooseCustomer": "Choose a customer",
   "quotePickCustomerFirst": "Choose a customer first",
   "deleteCustomerTitle": "Delete customer",
-  "deleteCustomerTypeName": "Type the card name to confirm:"
+  "deleteCustomerTypeName": "Type the card name to confirm:",
+  "totalAfterDiscount": "Total after discount"
 }

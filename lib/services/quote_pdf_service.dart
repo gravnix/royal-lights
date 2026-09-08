@@ -97,8 +97,15 @@ class QuotePdfService {
 
     final t = _labels(lang);
     final subtotal = items.fold<double>(0, (s, i) => s + i.lineTotal);
-    final vat = quote.vatEnabled ? subtotal * 0.18 : 0.0;
-    final grandTotal = subtotal + vat;
+    // Quotes discount BEFORE VAT — VAT is charged on the discounted amount.
+    // (Orders apply their discount to the VAT-inclusive total; that
+    // difference is deliberate, see CLAUDE.md.)
+    final discount = quote.discountType == 'fixed_amount'
+        ? quote.discountPercentage.clamp(0, subtotal).toDouble()
+        : subtotal * (quote.discountPercentage.clamp(0, 100) / 100);
+    final netTotal = subtotal - discount;
+    final vat = quote.vatEnabled ? netTotal * 0.18 : 0.0;
+    final grandTotal = netTotal + vat;
 
     final customerName = customer.customerName.trim().isNotEmpty
         ? customer.customerName
@@ -628,27 +635,36 @@ class QuotePdfService {
                 child: pw.Table(
                   border: grid,
                   columnWidths: columnWidths(totalsFlex),
-                  children: quote.vatEnabled
-                      ? [
-                          totalsRow(t.subtotal, value: moneyText(subtotal)),
-                          totalsRow(
-                            t.vat,
-                            labelLtrSuffix: '18%',
-                            value: moneyText(vat),
-                          ),
-                          totalsRow(
-                            t.totalIncVat,
-                            value: moneyText(grandTotal),
-                            isBold: true,
-                          ),
-                        ]
-                      : [
-                          totalsRow(
-                            t.subtotal,
-                            value: moneyText(grandTotal),
-                            isBold: true,
-                          ),
-                        ],
+                  children: [
+                    // Subtotal is only worth its own row when something is
+                    // subtracted from it below; otherwise it IS the total.
+                    if (discount > 0 || quote.vatEnabled)
+                      totalsRow(t.subtotal, value: moneyText(subtotal)),
+                    if (discount > 0)
+                      totalsRow(
+                        t.discount,
+                        labelLtrSuffix: quote.discountType == 'percentage'
+                            ? '${_formatQty(quote.discountPercentage)}%'
+                            : null,
+                        value: '-${moneyText(discount)}',
+                      ),
+                    // Net line only helps when VAT then applies on top of it.
+                    if (discount > 0 && quote.vatEnabled)
+                      totalsRow(t.netTotal, value: moneyText(netTotal)),
+                    if (quote.vatEnabled)
+                      totalsRow(
+                        t.vat,
+                        labelLtrSuffix: '18%',
+                        value: moneyText(vat),
+                      ),
+                    totalsRow(
+                      quote.vatEnabled
+                          ? t.totalIncVat
+                          : (discount > 0 ? t.netTotal : t.subtotal),
+                      value: moneyText(grandTotal),
+                      isBold: true,
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -840,6 +856,8 @@ class QuotePdfService {
     String code,
     String extras,
     String unitPrice,
+    String discount,
+    String netTotal,
   }) _labels(String lang) {
     return switch (lang) {
       'he' => (
@@ -860,6 +878,8 @@ class QuotePdfService {
           code: 'מק״ט',
           extras: 'תוספות',
           unitPrice: 'מחיר יחידה',
+          discount: 'הנחה',
+          netTotal: 'סה״כ אחרי הנחה',
         ),
       'ar' => (
           docTitle: 'عرض سعر',
@@ -879,6 +899,8 @@ class QuotePdfService {
           code: 'الرمز',
           extras: 'إضافات',
           unitPrice: 'سعر الوحدة',
+          discount: 'خصم',
+          netTotal: 'المجموع بعد الخصم',
         ),
       _ => (
           docTitle: 'Price Quote',
@@ -898,6 +920,8 @@ class QuotePdfService {
           code: 'Code',
           extras: 'Extras',
           unitPrice: 'Unit price',
+          discount: 'Discount',
+          netTotal: 'Total after discount',
         ),
     };
   }

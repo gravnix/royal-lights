@@ -423,5 +423,6 @@
   "quoteChooseCustomer": "اختر عميلاً",
   "quotePickCustomerFirst": "اختر عميلاً أولاً",
   "deleteCustomerTitle": "حذف العميل",
-  "deleteCustomerTypeName": "اكتب اسم البطاقة للتأكيد:"
+  "deleteCustomerTypeName": "اكتب اسم البطاقة للتأكيد:",
+  "totalAfterDiscount": "المجموع بعد الخصم"
 }
