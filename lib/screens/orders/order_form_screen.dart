@@ -9,8 +9,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:uuid/uuid.dart';
 import '../../config/app_date_format.dart';
 import '../../config/app_theme.dart';
-import '../../services/order_pdf_service.dart';
 import '../../services/whatsapp_service.dart';
+import '../../widgets/confirm_send_customer_wa.dart';
+import 'order_pdf_sender.dart';
 import '../../l10n/app_localizations.dart';
 import '../../models/customer.dart';
 import '../../models/order.dart';
@@ -23,9 +24,6 @@ import '../../widgets/app_dropdown_styles.dart';
 import '../../widgets/app_loading_overlay.dart';
 import '../../widgets/app_round_checkbox.dart';
 import '../../widgets/barcode_scan_dialog.dart';
-
-/// What happened to the automatic order-PDF send after a save.
-enum _OrderPdfSend { sent, noPhone, failed }
 
 class OrderFormScreen extends ConsumerStatefulWidget {
   final String? orderId;
@@ -66,6 +64,9 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
   final _discountPctFocusNode = FocusNode();
   List<_ItemRow> _items = [];
   bool _isLoading = false;
+
+  /// True while the manual "send PDF" button is working.
+  bool _sendingPdf = false;
   bool _hasUnsavedChanges = false;
   bool _isInitialLoad = false;
   bool _loadFailed = false;
@@ -2734,6 +2735,58 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
               ),
             ),
           ],
+          // Customer PDF — only once the order exists; it sends the saved
+          // version, so _sendPdfManually refuses while there are edits.
+          if (_existingOrder != null) ...[
+            SizedBox(height: fillVertical ? 8 : 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed:
+                    (_isLoading || _sendingPdf) ? null : _sendPdfManually,
+                icon: _sendingPdf
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppTheme.onPrimary,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.picture_as_pdf_rounded,
+                        size: 18,
+                        color: AppTheme.onPrimary,
+                      ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.onPrimary,
+                  side: BorderSide(
+                    color: AppTheme.onPrimary.withValues(alpha: 0.35),
+                  ),
+                  padding: EdgeInsets.symmetric(
+                    vertical: fillVertical ? 6 : 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                label: Text(
+                  _orderTableColumnLabel(
+                    context,
+                    l10n,
+                    'sendOrderPdf',
+                    en: 'Send PDF to customer',
+                    he: 'שלח PDF ללקוח',
+                    ar: 'إرسال PDF للعميل',
+                  ),
+                  style: GoogleFonts.assistant(
+                    fontSize: fillVertical ? 14 : 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+          ],
           if (_waitingSupplierConfirmation) ...[
             SizedBox(height: fillVertical ? 8 : 10),
             SizedBox(
@@ -3950,7 +4003,7 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
       final itemsSig = _signatureForOrderItems(orderItems);
       final shouldSendCustomerWa =
           isCreateFlow || (_lastNotifiedCustomerItemsSignature != itemsSig);
-      _OrderPdfSend? pdfSend;
+      OrderPdfSend? pdfSend;
       if (shouldSendCustomerWa) {
         pdfSend = await _sendOrderSummaryToCustomer(
           orderItems,
@@ -3968,25 +4021,9 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
         };
         // Say what happened to the customer PDF, so a failed send is visible
         // instead of looking identical to a successful one.
-        final pdfNote = switch (pdfSend) {
-          null => null,
-          _OrderPdfSend.sent => switch (lang) {
-              'he' => 'PDF ההזמנה נשלח ללקוח בוואטסאפ',
-              'ar' => 'تم إرسال ملف PDF للطلب إلى العميل عبر واتساب',
-              _ => 'Order PDF sent to the customer on WhatsApp',
-            },
-          _OrderPdfSend.noPhone => switch (lang) {
-              'he' => 'ה-PDF לא נשלח — אין ללקוח מספר טלפון',
-              'ar' => 'لم يُرسل ملف PDF — لا يوجد رقم هاتف للعميل',
-              _ => 'PDF not sent — the customer has no phone number',
-            },
-          _OrderPdfSend.failed => switch (lang) {
-              'he' => 'שליחת ה-PDF ללקוח נכשלה',
-              'ar' => 'فشل إرسال ملف PDF إلى العميل',
-              _ => 'Sending the PDF to the customer failed',
-            },
-        };
-        final pdfOk = pdfSend == null || pdfSend == _OrderPdfSend.sent;
+        final pdfNote =
+            pdfSend == null ? null : orderPdfSendMessage(pdfSend, lang);
+        final pdfOk = pdfSend == null || pdfSend == OrderPdfSend.sent;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -4212,79 +4249,74 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
     return result ?? false;
   }
 
-  /// Generates the order PDF and sends it over WhatsApp.
-  ///
-  /// Never throws — sending must not undo a successful save — but reports the
-  /// outcome so the save snackbar can say whether the customer actually got
-  /// the PDF. A silent failure here previously looked exactly like success.
-  Future<_OrderPdfSend> _sendOrderSummaryToCustomer(
+
+
+  /// Automatic send on save — uses the form's freshly saved order and the
+  /// items exactly as they were just written.
+  Future<OrderPdfSend> _sendOrderSummaryToCustomer(
     List<OrderItem> orderItems, {
     bool isOrderItemsUpdate = false,
   }) async {
     final customer = _selectedCustomer;
-    final phone = (customer != null && customer.phones.isNotEmpty)
-        ? customer.phones.first.trim()
-        : '';
-    if (customer == null || phone.isEmpty) return _OrderPdfSend.noPhone;
-
-    final code = mounted ? Localizations.localeOf(context).languageCode : 'he';
-
     final order = _existingOrder;
-    if (order == null) return _OrderPdfSend.failed;
-
-    // The order details go out as a PDF, not as a wall of WhatsApp text.
-    try {
-      await OrderPdfService.warmUp(code);
-      final pdfBytes = await OrderPdfService.generate(
-        customer: customer,
-        order: order,
-        items: orderItems,
-        languageCode: code,
-      );
-      final pdfUrl =
-          await ref.read(orderServiceProvider).uploadPdf(order.id, pdfBytes);
-
-      final sent = await WhatsAppService.sendDocument(
-        phone,
-        pdfUrl,
-        _customerOrderCaption(
-          languageCode: code,
-          customer: customer,
-          orderNumber: order.orderNumber,
-          isOrderItemsUpdate: isOrderItemsUpdate,
-        ),
-        fileName: 'order-${order.orderNumber ?? order.id}.pdf',
-      );
-      return sent ? _OrderPdfSend.sent : _OrderPdfSend.failed;
-    } catch (e) {
-      debugPrint('Order PDF send failed: $e');
-      return _OrderPdfSend.failed;
-    }
+    if (customer == null) return OrderPdfSend.noPhone;
+    if (order == null) return OrderPdfSend.failed;
+    return sendOrderPdfToCustomer(
+      orderService: ref.read(orderServiceProvider),
+      customer: customer,
+      order: order,
+      items: orderItems,
+      languageCode:
+          mounted ? Localizations.localeOf(context).languageCode : 'he',
+      isUpdate: isOrderItemsUpdate,
+    );
   }
 
-  /// Short WhatsApp caption that accompanies the order PDF. The figures now
-  /// live in the document, so this only has to say what arrived.
-  String _customerOrderCaption({
-    required String languageCode,
-    required Customer customer,
-    required int? orderNumber,
-    required bool isOrderItemsUpdate,
-  }) {
-    final name = customer.customerName.trim().isNotEmpty
-        ? customer.customerName
-        : customer.cardName;
-    final numText = orderNumber != null ? ' #$orderNumber' : '';
-    return switch (languageCode) {
-      'he' => isOrderItemsUpdate
-          ? 'שלום $name,\nההזמנה$numText עודכנה. הפרטים המלאים בקובץ המצורף.'
-          : 'שלום $name,\nתודה על הזמנתך$numText! הפרטים המלאים בקובץ המצורף.',
-      'ar' => isOrderItemsUpdate
-          ? 'مرحبًا $name،\nتم تحديث الطلب$numText. التفاصيل في الملف المرفق.'
-          : 'مرحبًا $name،\nشكرًا على طلبك$numText! التفاصيل في الملف المرفق.',
-      _ => isOrderItemsUpdate
-          ? 'Hello $name,\nYour order$numText has been updated. Full details are in the attached PDF.'
-          : 'Hello $name,\nThank you for your order$numText! Full details are in the attached PDF.',
-    };
+  /// Manual "send PDF" button. Sends the SAVED order, so it refuses while
+  /// there are unsaved edits — otherwise the customer would receive a PDF that
+  /// doesn't match what's on screen.
+  Future<void> _sendPdfManually() async {
+    final lang = Localizations.localeOf(context).languageCode;
+    void snack(String text, Color color) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(text, style: GoogleFonts.assistant()),
+          backgroundColor: color,
+        ),
+      );
+    }
+
+    if (_hasUnsavedChanges) {
+      snack(
+        switch (lang) {
+          'he' => 'יש לשמור את ההזמנה לפני שליחת ה-PDF',
+          'ar' => 'يرجى حفظ الطلب قبل إرسال ملف PDF',
+          _ => 'Save the order before sending the PDF',
+        },
+        AppTheme.warning,
+      );
+      return;
+    }
+    final order = _existingOrder;
+    final customer = _selectedCustomer;
+    if (order == null || customer == null) return;
+    if (!await confirmSendCustomerWhatsApp(context)) return;
+    if (!mounted) return;
+
+    setState(() => _sendingPdf = true);
+    final result = await sendOrderPdfToCustomer(
+      orderService: ref.read(orderServiceProvider),
+      customer: customer,
+      order: order,
+      items: order.items,
+      languageCode: lang,
+    );
+    if (!mounted) return;
+    setState(() => _sendingPdf = false);
+    snack(
+      orderPdfSendMessage(result, lang),
+      result == OrderPdfSend.sent ? AppTheme.success : AppTheme.warning,
+    );
   }
 
   /// Stable fingerprint of line-item fields that affect the customer order summary.

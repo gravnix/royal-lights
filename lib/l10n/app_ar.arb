@@ -425,5 +425,6 @@
   "deleteCustomerTitle": "حذف العميل",
   "deleteCustomerTypeName": "اكتب اسم البطاقة للتأكيد:",
   "totalAfterDiscount": "المجموع بعد الخصم",
-  "remindersYesterday": "أمس"
+  "remindersYesterday": "أمس",
+  "sendOrderPdf": "إرسال PDF للعميل"
 }

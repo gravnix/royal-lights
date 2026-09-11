@@ -425,5 +425,6 @@
   "deleteCustomerTitle": "Delete customer",
   "deleteCustomerTypeName": "Type the card name to confirm:",
   "totalAfterDiscount": "Total after discount",
-  "remindersYesterday": "Yesterday"
+  "remindersYesterday": "Yesterday",
+  "sendOrderPdf": "Send PDF to customer"
 }

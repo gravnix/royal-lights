@@ -425,5 +425,6 @@
   "deleteCustomerTitle": "מחיקת לקוח",
   "deleteCustomerTypeName": "הקלד את שם הכרטיס לאישור:",
   "totalAfterDiscount": "סה״כ אחרי הנחה",
-  "remindersYesterday": "אתמול"
+  "remindersYesterday": "אתמול",
+  "sendOrderPdf": "שלח PDF ללקוח"
 }
