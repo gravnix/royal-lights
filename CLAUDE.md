@@ -283,7 +283,7 @@ The corresponding migrations were applied to the DB even though the Dart code wa
 | `dashboard_metrics.dart` | **All aggregation maths** — period windows, deltas, debt bands, debt aging, trend buckets. Pure functions over fetched lists; no widgets, no Riverpod. Change a number's definition here, not in the UI. |
 | `dashboard_ui.dart` | `dashTr(...)` l10n helper, `money()` / `count()` formatters (the only place `₪` is written), card chrome (`dashCardDecoration`, `DashCardHeader`, `DashPill`, `DashEmptyState`). |
 | `dashboard_charts.dart` | `TrendBarChart` (single-series bars) and `SegmentedProportionBar` (composition bar + legend), plus `severityRamp` / `rampSteps`. |
-| `timeline_cards.dart` | `RemindersCard` (today + tomorrow alerts) and `CalendarCard` (inline month grid). |
+| `timeline_cards.dart` | `RemindersCard` (yesterday + today + tomorrow alerts) and `CalendarCard` (inline month grid). |
 | `timeline_note_dialog.dart` | Add / edit / delete a reminder. |
 
 Conventions worth keeping:
@@ -296,7 +296,7 @@ Conventions worth keeping:
 
 ### Reminders (`timeline_notes`)
 
-Shared dated notes — every authenticated user sees and edits all of them (RLS: `authenticated` full access). A note surfaces in `RemindersCard` **on its date and the day before**; there is no done/dismissed flag because alerts age out on their own. Table created by `supabase/migrations/20260901120000_create_timeline_notes.sql`. `timelineNotesProvider` tolerates the table being absent (`PGRST205` guard), so the dashboard still renders before the migration is pushed.
+Shared dated notes — every authenticated user sees and edits all of them (RLS: `authenticated` full access). A note surfaces in `RemindersCard` **from the day before its date through the day after** (shown under אתמול / היום / מחר); there is no done/dismissed flag because alerts age out on their own. Compute those days with calendar arithmetic — `DateTime(y, m, d ± 1)` — never `Duration(days: 1)`: Israel observes DST and a ±24h step lands on the wrong date on changeover days. Table created by `supabase/migrations/20260901120000_create_timeline_notes.sql`. `timelineNotesProvider` tolerates the table being absent (`PGRST205` guard), so the dashboard still renders before the migration is pushed.
 
 ## 17. Quotes, orders and the PDF pipeline
 

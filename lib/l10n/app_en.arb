@@ -403,8 +403,8 @@
   "ordersInProgress": "In progress",
   "noOrders": "No orders yet",
   "reminders": "Reminders",
-  "remindersSubtitle": "Today and tomorrow",
-  "noReminders": "No reminders for today or tomorrow",
+  "remindersSubtitle": "Yesterday, today and tomorrow",
+  "noReminders": "No reminders for yesterday, today or tomorrow",
   "remindersToday": "Today",
   "remindersTomorrow": "Tomorrow",
   "addReminder": "New reminder",
@@ -424,5 +424,6 @@
   "quotePickCustomerFirst": "Choose a customer first",
   "deleteCustomerTitle": "Delete customer",
   "deleteCustomerTypeName": "Type the card name to confirm:",
-  "totalAfterDiscount": "Total after discount"
+  "totalAfterDiscount": "Total after discount",
+  "remindersYesterday": "Yesterday"
 }

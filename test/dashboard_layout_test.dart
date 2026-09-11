@@ -67,15 +67,21 @@ void main() {
       ),
   ];
 
+  // Calendar offsets (not ±24h) so the fixture is DST-safe, like the card.
+  DateTime dayOffset(int d) => DateTime(now.year, now.month, now.day + d);
+
   final notes = [
     TimelineNote(
       id: 'n1',
-      noteDate: now,
+      noteDate: dayOffset(0),
       title: 'להתקשר לספק',
       body: 'לבדוק מלאי נברשות',
     ),
-    TimelineNote(id: 'n2', noteDate: now.add(const Duration(days: 1)), title: 'משלוח'),
-    TimelineNote(id: 'n3', noteDate: now.add(const Duration(days: 9)), title: 'הרכבה'),
+    TimelineNote(id: 'n2', noteDate: dayOffset(1), title: 'משלוח'),
+    TimelineNote(id: 'n3', noteDate: dayOffset(9), title: 'הרכבה'),
+    TimelineNote(id: 'n4', noteDate: dayOffset(-1), title: 'לגבות תשלום'),
+    TimelineNote(id: 'n5', noteDate: dayOffset(-2), title: 'ישן מדי'),
+    TimelineNote(id: 'n6', noteDate: dayOffset(2), title: 'רחוק מדי'),
   ];
 
   Widget harness(Locale locale) {
@@ -146,6 +152,29 @@ void main() {
       );
     }
   }
+
+  testWidgets('reminders panel shows yesterday, today and tomorrow only',
+      (tester) async {
+    setSize(tester, 1440);
+    await pumpDashboard(tester, const Locale('he'));
+
+    // One heading per day, in the panel.
+    expect(find.text('אתמול'), findsOneWidget);
+    expect(find.text('היום'), findsOneWidget);
+    expect(find.text('מחר'), findsOneWidget);
+
+    // Inside the window.
+    expect(find.text('לגבות תשלום'), findsOneWidget); // yesterday
+    expect(find.text('להתקשר לספק'), findsOneWidget); // today
+    expect(find.text('משלוח'), findsOneWidget); // tomorrow
+
+    // Outside it — calendar only, never the panel.
+    expect(find.text('ישן מדי'), findsNothing); // 2 days ago
+    expect(find.text('רחוק מדי'), findsNothing); // in 2 days
+    expect(find.text('הרכבה'), findsNothing); // in 9 days
+
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('period toggle switches between monthly and yearly',
       (tester) async {

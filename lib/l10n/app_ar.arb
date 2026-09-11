@@ -403,8 +403,8 @@
   "ordersInProgress": "قيد المعالجة",
   "noOrders": "لا توجد طلبات بعد",
   "reminders": "التذكيرات",
-  "remindersSubtitle": "اليوم وغدًا",
-  "noReminders": "لا توجد تذكيرات لليوم أو غدًا",
+  "remindersSubtitle": "أمس واليوم وغدًا",
+  "noReminders": "لا توجد تذكيرات لأمس أو اليوم أو غدًا",
   "remindersToday": "اليوم",
   "remindersTomorrow": "غدًا",
   "addReminder": "تذكير جديد",
@@ -424,5 +424,6 @@
   "quotePickCustomerFirst": "اختر عميلاً أولاً",
   "deleteCustomerTitle": "حذف العميل",
   "deleteCustomerTypeName": "اكتب اسم البطاقة للتأكيد:",
-  "totalAfterDiscount": "المجموع بعد الخصم"
+  "totalAfterDiscount": "المجموع بعد الخصم",
+  "remindersYesterday": "أمس"
 }
