@@ -24,6 +24,9 @@ import '../../widgets/app_loading_overlay.dart';
 import '../../widgets/app_round_checkbox.dart';
 import '../../widgets/barcode_scan_dialog.dart';
 
+/// What happened to the automatic order-PDF send after a save.
+enum _OrderPdfSend { sent, noPhone, failed }
+
 class OrderFormScreen extends ConsumerStatefulWidget {
   final String? orderId;
   final Customer? initialCustomer;
@@ -3947,8 +3950,9 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
       final itemsSig = _signatureForOrderItems(orderItems);
       final shouldSendCustomerWa =
           isCreateFlow || (_lastNotifiedCustomerItemsSignature != itemsSig);
+      _OrderPdfSend? pdfSend;
       if (shouldSendCustomerWa) {
-        await _sendOrderSummaryToCustomer(
+        pdfSend = await _sendOrderSummaryToCustomer(
           orderItems,
           isOrderItemsUpdate: !isCreateFlow,
         );
@@ -3957,19 +3961,41 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
 
       if (mounted) {
         final lang = Localizations.localeOf(context).languageCode;
-        final successMessage = switch (lang) {
+        final savedMessage = switch (lang) {
           'he' => 'ההזמנה נשמרה בהצלחה',
           'ar' => 'تم حفظ الطلب بنجاح',
           _ => 'Order saved successfully',
         };
+        // Say what happened to the customer PDF, so a failed send is visible
+        // instead of looking identical to a successful one.
+        final pdfNote = switch (pdfSend) {
+          null => null,
+          _OrderPdfSend.sent => switch (lang) {
+              'he' => 'PDF ההזמנה נשלח ללקוח בוואטסאפ',
+              'ar' => 'تم إرسال ملف PDF للطلب إلى العميل عبر واتساب',
+              _ => 'Order PDF sent to the customer on WhatsApp',
+            },
+          _OrderPdfSend.noPhone => switch (lang) {
+              'he' => 'ה-PDF לא נשלח — אין ללקוח מספר טלפון',
+              'ar' => 'لم يُرسل ملف PDF — لا يوجد رقم هاتف للعميل',
+              _ => 'PDF not sent — the customer has no phone number',
+            },
+          _OrderPdfSend.failed => switch (lang) {
+              'he' => 'שליחת ה-PDF ללקוח נכשלה',
+              'ar' => 'فشل إرسال ملف PDF إلى العميل',
+              _ => 'Sending the PDF to the customer failed',
+            },
+        };
+        final pdfOk = pdfSend == null || pdfSend == _OrderPdfSend.sent;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              successMessage,
+              pdfNote == null ? savedMessage : '$savedMessage · $pdfNote',
               style: GoogleFonts.assistant(),
             ),
-            backgroundColor: AppTheme.success,
-            duration: const Duration(seconds: 3),
+            // Saved either way; amber only flags that the PDF didn't go out.
+            backgroundColor: pdfOk ? AppTheme.success : AppTheme.warning,
+            duration: Duration(seconds: pdfOk ? 3 : 6),
           ),
         );
       }
@@ -4186,20 +4212,25 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
     return result ?? false;
   }
 
-  Future<void> _sendOrderSummaryToCustomer(
+  /// Generates the order PDF and sends it over WhatsApp.
+  ///
+  /// Never throws — sending must not undo a successful save — but reports the
+  /// outcome so the save snackbar can say whether the customer actually got
+  /// the PDF. A silent failure here previously looked exactly like success.
+  Future<_OrderPdfSend> _sendOrderSummaryToCustomer(
     List<OrderItem> orderItems, {
     bool isOrderItemsUpdate = false,
   }) async {
     final customer = _selectedCustomer;
-    if (customer == null) return;
-    if (customer.phones.isEmpty) return;
-    final phone = customer.phones.first;
-    if (phone.trim().isEmpty) return;
+    final phone = (customer != null && customer.phones.isNotEmpty)
+        ? customer.phones.first.trim()
+        : '';
+    if (customer == null || phone.isEmpty) return _OrderPdfSend.noPhone;
 
     final code = mounted ? Localizations.localeOf(context).languageCode : 'he';
 
     final order = _existingOrder;
-    if (order == null) return;
+    if (order == null) return _OrderPdfSend.failed;
 
     // The order details go out as a PDF, not as a wall of WhatsApp text.
     try {
@@ -4213,7 +4244,7 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
       final pdfUrl =
           await ref.read(orderServiceProvider).uploadPdf(order.id, pdfBytes);
 
-      await WhatsAppService.sendDocument(
+      final sent = await WhatsAppService.sendDocument(
         phone,
         pdfUrl,
         _customerOrderCaption(
@@ -4224,9 +4255,10 @@ class _OrderFormScreenState extends ConsumerState<OrderFormScreen>
         ),
         fileName: 'order-${order.orderNumber ?? order.id}.pdf',
       );
-    } catch (_) {
-      // Sending is best-effort and must never block saving the order — the
-      // same contract the text message had.
+      return sent ? _OrderPdfSend.sent : _OrderPdfSend.failed;
+    } catch (e) {
+      debugPrint('Order PDF send failed: $e');
+      return _OrderPdfSend.failed;
     }
   }
 
