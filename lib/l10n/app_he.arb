@@ -403,8 +403,8 @@
   "ordersInProgress": "הזמנות בטיפול",
   "noOrders": "אין הזמנות עדיין",
   "reminders": "תזכורות",
-  "remindersSubtitle": "להיום ולמחר",
-  "noReminders": "אין תזכורות להיום או למחר",
+  "remindersSubtitle": "אתמול, היום ומחר",
+  "noReminders": "אין תזכורות לאתמול, היום או מחר",
   "remindersToday": "היום",
   "remindersTomorrow": "מחר",
   "addReminder": "תזכורת חדשה",
@@ -418,5 +418,13 @@
   "calendarSubtitle": "בחר יום כדי להוסיף תזכורת",
   "previousMonth": "חודש קודם",
   "nextMonth": "חודש הבא",
-  "close": "סגור"
+  "close": "סגור",
+  "newQuote": "הצעת מחיר חדשה",
+  "quoteChooseCustomer": "בחר לקוח",
+  "quotePickCustomerFirst": "יש לבחור לקוח תחילה",
+  "deleteCustomerTitle": "מחיקת לקוח",
+  "deleteCustomerTypeName": "הקלד את שם הכרטיס לאישור:",
+  "totalAfterDiscount": "סה״כ אחרי הנחה",
+  "remindersYesterday": "אתמול",
+  "sendOrderPdf": "שלח PDF ללקוח"
 }

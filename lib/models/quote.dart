@@ -38,6 +38,13 @@ class Quote {
   final String? notes;
   final double totalPrice;
   final bool vatEnabled;
+
+  /// Discount value. A percentage (0-100) when [discountType] is
+  /// 'percentage', otherwise an amount in ILS. Same overload as Order.
+  final double discountPercentage;
+
+  /// Either 'percentage' or 'fixed_amount'.
+  final String discountType;
   final String? pdfUrl;
   final String? convertedOrderId;
   final String? createdBy;
@@ -58,6 +65,8 @@ class Quote {
     this.notes,
     this.totalPrice = 0,
     this.vatEnabled = true,
+    this.discountPercentage = 0,
+    this.discountType = 'percentage',
     this.pdfUrl,
     this.convertedOrderId,
     this.createdBy,
@@ -80,6 +89,9 @@ class Quote {
       notes: json['notes'] as String?,
       totalPrice: (json['total_price'] as num?)?.toDouble() ?? 0,
       vatEnabled: json['vat_enabled'] as bool? ?? true,
+      discountPercentage:
+          (json['discount_percentage'] as num?)?.toDouble() ?? 0,
+      discountType: json['discount_type'] as String? ?? 'percentage',
       pdfUrl: json['pdf_url'] as String?,
       convertedOrderId: json['converted_order_id'] as String?,
       createdBy: json['created_by'] as String?,
@@ -111,6 +123,8 @@ class Quote {
       'notes': notes,
       'total_price': totalPrice,
       'vat_enabled': vatEnabled,
+      'discount_percentage': discountPercentage,
+      'discount_type': discountType,
       'pdf_url': pdfUrl,
       'converted_order_id': convertedOrderId,
       'created_by': createdBy,
@@ -126,6 +140,8 @@ class Quote {
     String? notes,
     double? totalPrice,
     bool? vatEnabled,
+    double? discountPercentage,
+    String? discountType,
     String? pdfUrl,
     String? convertedOrderId,
     String? createdBy,
@@ -142,6 +158,8 @@ class Quote {
       notes: notes ?? this.notes,
       totalPrice: totalPrice ?? this.totalPrice,
       vatEnabled: vatEnabled ?? this.vatEnabled,
+      discountPercentage: discountPercentage ?? this.discountPercentage,
+      discountType: discountType ?? this.discountType,
       pdfUrl: pdfUrl ?? this.pdfUrl,
       convertedOrderId: convertedOrderId ?? this.convertedOrderId,
       createdBy: createdBy ?? this.createdBy,

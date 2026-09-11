@@ -39,11 +39,13 @@ List<TimelineNote> _notesOn(List<TimelineNote> notes, DateTime day) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Alerts panel — today + tomorrow
+// Alerts panel — yesterday + today + tomorrow
 // ─────────────────────────────────────────────────────────────────
 
-/// Surfaces reminders on their date and the day before, which is the alerting
-/// behaviour the app promises. Anything further out lives only in the calendar.
+/// Surfaces reminders from the day before their date through the day after:
+/// tomorrow's as a heads-up, today's as due, and yesterday's so one that
+/// slipped past isn't gone the moment the date turns. Anything further out
+/// lives only in the calendar.
 class RemindersCard extends StatelessWidget {
   final List<TimelineNote> notes;
   final bool loading;
@@ -62,11 +64,36 @@ class RemindersCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final today = dateOnly(now);
-    final tomorrow = today.add(const Duration(days: 1));
+    // Calendar arithmetic, not ±24h: Israel observes DST, and on the 23- or
+    // 25-hour changeover days a Duration(days: 1) step lands on the wrong date.
+    final yesterday = DateTime(today.year, today.month, today.day - 1);
+    final tomorrow = DateTime(today.year, today.month, today.day + 1);
 
-    final todayNotes = _notesOn(notes, today);
-    final tomorrowNotes = _notesOn(notes, tomorrow);
-    final total = todayNotes.length + tomorrowNotes.length;
+    // Chronological, so the panel reads top to bottom like the calendar.
+    // Yesterday is red because it has already passed; today carries the
+    // accent; tomorrow is a quiet heads-up.
+    final groups = [
+      (
+        label: dashTr(context, l10n, 'remindersYesterday',
+            en: 'Yesterday', he: 'אתמול', ar: 'أمس'),
+        color: AppTheme.error,
+        notes: _notesOn(notes, yesterday),
+      ),
+      (
+        label: dashTr(context, l10n, 'remindersToday',
+            en: 'Today', he: 'היום', ar: 'اليوم'),
+        color: AppTheme.secondary,
+        notes: _notesOn(notes, today),
+      ),
+      (
+        label: dashTr(context, l10n, 'remindersTomorrow',
+            en: 'Tomorrow', he: 'מחר', ar: 'غدًا'),
+        color: AppTheme.onSurfaceVariant,
+        notes: _notesOn(notes, tomorrow),
+      ),
+    ].where((g) => g.notes.isNotEmpty).toList();
+
+    final total = groups.fold<int>(0, (sum, g) => sum + g.notes.length);
 
     return Container(
       // Leads the dashboard alongside the calendar, so it always reads as a
@@ -85,9 +112,9 @@ class RemindersCard extends StatelessWidget {
             title: dashTr(context, l10n, 'reminders',
                 en: 'Reminders', he: 'תזכורות', ar: 'التذكيرات'),
             subtitle: dashTr(context, l10n, 'remindersSubtitle',
-                en: 'Today and tomorrow',
-                he: 'להיום ולמחר',
-                ar: 'اليوم وغدًا'),
+                en: 'Yesterday, today and tomorrow',
+                he: 'אתמול, היום ומחר',
+                ar: 'أمس واليوم وغدًا'),
             trailing: total > 0
                 ? DashPill(label: '$total', color: AppTheme.secondary)
                 : null,
@@ -108,32 +135,21 @@ class RemindersCard extends StatelessWidget {
             DashEmptyState(
               icon: Icons.notifications_none_rounded,
               message: dashTr(context, l10n, 'noReminders',
-                  en: 'No reminders for today or tomorrow',
-                  he: 'אין תזכורות להיום או למחר',
-                  ar: 'لا توجد تذكيرات لليوم أو غدًا'),
+                  en: 'No reminders for yesterday, today or tomorrow',
+                  he: 'אין תזכורות לאתמול, היום או מחר',
+                  ar: 'لا توجد تذكيرات لأمس أو اليوم أو غدًا'),
             )
-          else ...[
-            if (todayNotes.isNotEmpty)
+          else
+            for (var i = 0; i < groups.length; i++) ...[
+              if (i > 0) const SizedBox(height: 14),
               _ReminderGroup(
-                label: dashTr(context, l10n, 'remindersToday',
-                    en: 'Today', he: 'היום', ar: 'اليوم'),
-                color: AppTheme.secondary,
-                notes: todayNotes,
+                label: groups[i].label,
+                color: groups[i].color,
+                notes: groups[i].notes,
                 l10n: l10n,
                 ref: ref,
               ),
-            if (todayNotes.isNotEmpty && tomorrowNotes.isNotEmpty)
-              const SizedBox(height: 14),
-            if (tomorrowNotes.isNotEmpty)
-              _ReminderGroup(
-                label: dashTr(context, l10n, 'remindersTomorrow',
-                    en: 'Tomorrow', he: 'מחר', ar: 'غدًا'),
-                color: AppTheme.onSurfaceVariant,
-                notes: tomorrowNotes,
-                l10n: l10n,
-                ref: ref,
-              ),
-          ],
+            ],
           const SizedBox(height: 14),
           Align(
             alignment: AlignmentDirectional.centerStart,

@@ -17,6 +17,7 @@ import '../../widgets/app_round_checkbox.dart';
 import '../../widgets/confirm_send_customer_wa.dart';
 import '../../widgets/editorial_screen_title.dart';
 import 'order_form_screen.dart';
+import 'order_pdf_sender.dart';
 
 Widget _listAppear({
   required Widget child,
@@ -57,6 +58,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   int _sortColumnIndex = 4;
   bool _sortAscending = false;
   String? _updatingOrderId;
+
+  /// Row whose customer PDF is being sent, for its inline spinner.
+  String? _sendingPdfOrderId;
   int _currentPage = 1;
   int _rowsPerPage = 15;
   static const _rowsPerPageOptions = [10, 15, 25, 50];
@@ -868,6 +872,12 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                                                     _sortAscending = asc;
                                                   }),
                                                 ),
+                                                // Appended last on purpose: the
+                                                // sort switch keys off column
+                                                // indices 1..8.
+                                                const DataColumn(
+                                                  label: Text('PDF'),
+                                                ),
                                               ],
                                               rows: paginatedFiltered
                                                   .asMap()
@@ -1086,6 +1096,10 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                                                           fontSize: 15,
                                                         ),
                                                       ),
+                                                    ),
+                                                    DataCell(
+                                                      _buildSendPdfCell(
+                                                          context, order),
                                                     ),
                                                   ],
                                                 );
@@ -1493,6 +1507,71 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           onPressed: () => _workflowMarkDelivered(order),
         );
     }
+  }
+
+  Widget _buildSendPdfCell(BuildContext context, Order order) {
+    if (_sendingPdfOrderId == order.id) {
+      return const SizedBox(
+        width: 22,
+        height: 22,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+    final lang = Localizations.localeOf(context).languageCode;
+    // A canceled order has nothing to send the customer.
+    final enabled =
+        order.status != OrderStatus.canceled && _sendingPdfOrderId == null;
+    return IconButton(
+      tooltip: switch (lang) {
+        'he' => 'שלח PDF ללקוח',
+        'ar' => 'إرسال PDF للعميل',
+        _ => 'Send PDF to customer',
+      },
+      icon: const Icon(Icons.picture_as_pdf_rounded, size: 20),
+      color: AppTheme.secondary,
+      disabledColor: AppTheme.outlineVariant,
+      onPressed: enabled ? () => _sendOrderPdf(order) : null,
+    );
+  }
+
+  Future<void> _sendOrderPdf(Order order) async {
+    final lang = Localizations.localeOf(context).languageCode;
+    if (!await confirmSendCustomerWhatsApp(context)) return;
+    if (!mounted) return;
+
+    setState(() => _sendingPdfOrderId = order.id);
+    OrderPdfSend result;
+    try {
+      // Re-read both: the list row can be stale, and the PDF must show what
+      // is actually stored. The customer row is also where the phone lives.
+      final results = await Future.wait([
+        ref.read(orderServiceProvider).getById(order.id),
+        ref.read(customerServiceProvider).getById(order.customerId),
+      ]);
+      final fresh = results[0] as Order;
+      final customer = results[1] as Customer;
+      result = await sendOrderPdfToCustomer(
+        orderService: ref.read(orderServiceProvider),
+        customer: customer,
+        order: fresh,
+        items: fresh.items,
+        languageCode: lang,
+      );
+    } catch (_) {
+      result = OrderPdfSend.failed;
+    }
+    if (!mounted) return;
+    setState(() => _sendingPdfOrderId = null);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          orderPdfSendMessage(result, lang),
+          style: GoogleFonts.assistant(),
+        ),
+        backgroundColor:
+            result == OrderPdfSend.sent ? AppTheme.success : AppTheme.warning,
+      ),
+    );
   }
 
   Widget _buildOrderWorkflowCell(

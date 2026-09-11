@@ -74,14 +74,47 @@ class CustomerService {
     await update(customerId, {'image_url': null});
   }
 
+  /// How much history a delete would destroy. Used to spell out the damage in
+  /// the confirmation dialog rather than discovering it from a DB error.
+  Future<({int orders, int payments})> getDeletionImpact(String id) async {
+    final results = await Future.wait([
+      _client.from('orders').select('id').eq('customer_id', id),
+      _client.from('payments').select('id').eq('customer_id', id),
+    ]);
+    return (
+      orders: (results[0] as List).length,
+      payments: (results[1] as List).length,
+    );
+  }
+
+  /// Deletes the customer and everything hanging off them.
+  ///
+  /// `orders` and `payments` are declared `ON DELETE RESTRICT`, so deleting the
+  /// customer row on its own raises a foreign-key violation for anyone who has
+  /// ever ordered or paid — which is essentially every real customer. The
+  /// dependants are therefore removed explicitly, in FK order, rather than by
+  /// relaxing the constraints to CASCADE: financial history should only ever be
+  /// destroyed by this deliberate path, never as a side effect of some other
+  /// delete elsewhere in the app.
+  ///
+  /// `quotes` and `fixing_tickets` already cascade, as do `order_items`,
+  /// `quote_items` and `fixing_ticket_items` under their parents.
+  ///
+  /// **This is irreversible.** Callers must confirm against
+  /// [getDeletionImpact] first.
   Future<void> delete(String id) async {
-    // Best-effort: remove stored photo as well (ignore missing/permission errors).
+    // Payments first: they reference both the customer and (optionally) an
+    // order, so they have to go before the orders they point at.
+    await _client.from('payments').delete().eq('customer_id', id);
+    await _client.from('orders').delete().eq('customer_id', id);
+    await _client.from('customers').delete().eq('id', id);
+
+    // Photo last, and best-effort: if it were removed first, a failed row
+    // delete would leave the customer alive with a dead image_url.
     const bucket = 'customer-photos';
     final path = '$id/photo.jpg';
     try {
       await _client.storage.from(bucket).remove([path]);
     } catch (_) {}
-
-    await _client.from('customers').delete().eq('id', id);
   }
 }

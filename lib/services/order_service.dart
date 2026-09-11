@@ -244,4 +244,27 @@ class OrderService {
         .inFilter('status', ['Active', 'In Assembly']);
     return (data as List).length;
   }
+
+  /// Uploads the order PDF and returns its public URL.
+  ///
+  /// Mirrors QuoteService.uploadPdf, including the `?v=<ms>` cache-buster:
+  /// upsert reuses the same path, so without it WhatsApp and the browser
+  /// would keep serving the previous version of a regenerated PDF.
+  Future<String> uploadPdf(String orderId, Uint8List pdfBytes) async {
+    const bucket = 'order-pdfs';
+    final path = '$orderId/order.pdf';
+    await _client.storage.from(bucket).uploadBinary(
+          path,
+          pdfBytes,
+          fileOptions: const FileOptions(
+            upsert: true,
+            contentType: 'application/pdf',
+          ),
+        );
+    final url = _client.storage.from(bucket).getPublicUrl(path);
+    final ts = DateTime.now().millisecondsSinceEpoch.toString();
+    final uri = Uri.parse(url);
+    final qp = Map<String, String>.from(uri.queryParameters)..['v'] = ts;
+    return uri.replace(queryParameters: qp).toString();
+  }
 }
